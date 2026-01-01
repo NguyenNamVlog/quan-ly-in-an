@@ -1,0 +1,14 @@
+streamlit
+rembg
+opencv-python-headless
+numpy
+Pillow
+watchdog
+onnxruntime
+pandas
+fpdf
+docxtpl
+plotly
+num2words
+openpyxl
+st-gsheets-connection
