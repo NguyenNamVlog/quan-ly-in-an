@@ -13,6 +13,9 @@ from streamlit_gsheets import GSheetsConnection
 TEMPLATE_CONTRACT = 'Hop dong .docx' 
 FONT_PATH = 'Arial.ttf'
 
+# !!! QUAN TRỌNG: DÁN LINK GOOGLE SHEET CỦA BẠN VÀO GIỮA 2 DẤU NGOẶC KÉP DƯỚI ĐÂY !!!
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit" 
+
 # --- HÀM TIỆN ÍCH ---
 def format_currency(value):
     if value is None: return "0"
@@ -36,20 +39,17 @@ def load_db():
     """Tải dữ liệu Đơn hàng từ Google Sheets"""
     try:
         conn = get_db_connection()
-        # Đọc sheet Orders, ttl=0 để không cache (lấy dữ liệu mới nhất)
-        df = conn.read(worksheet="Orders", ttl=0)
+        # Thêm tham số spreadsheet=SHEET_URL để chỉ định file
+        df = conn.read(spreadsheet=SHEET_URL, worksheet="Orders", ttl=0)
         
         if df.empty:
             return []
         
-        # Chuyển đổi DataFrame trở lại thành List of Dicts
-        # Vì lưu trên Sheet thì các cột chứa JSON (như items, customer) sẽ là string, cần parse lại
         data = []
         for _, row in df.iterrows():
             item = row.to_dict()
-            
-            # Giải mã các trường JSON
             try:
+                # Parse JSON nếu dữ liệu là string
                 if isinstance(item.get('customer'), str):
                     item['customer'] = json.loads(item['customer'])
                 if isinstance(item.get('items'), str):
@@ -57,12 +57,11 @@ def load_db():
                 if isinstance(item.get('financial'), str):
                     item['financial'] = json.loads(item['financial'])
             except:
-                continue # Bỏ qua dòng lỗi
-                
+                continue 
             data.append(item)
         return data
     except Exception as e:
-        st.error(f"Lỗi kết nối Database: {e}")
+        # Nếu chưa có dữ liệu hoặc lỗi khác, trả về list rỗng để không sập app
         return []
 
 def save_db(data):
@@ -71,25 +70,22 @@ def save_db(data):
         conn = get_db_connection()
         
         if not data:
-            # Nếu data rỗng, tạo DF rỗng để xóa sheet
             df = pd.DataFrame()
-            conn.update(worksheet="Orders", data=df)
+            conn.update(spreadsheet=SHEET_URL, worksheet="Orders", data=df)
             return
 
-        # Tạo bản sao để xử lý serialize
         data_to_save = []
         for item in data:
-            # Copy item để không ảnh hưởng data gốc trong session
             clean_item = item.copy()
-            # Chuyển các object phức tạp thành chuỗi JSON để lưu vào 1 ô Excel
+            # Serialize JSON
             clean_item['customer'] = json.dumps(item['customer'], ensure_ascii=False)
             clean_item['items'] = json.dumps(item['items'], ensure_ascii=False)
             clean_item['financial'] = json.dumps(item['financial'], ensure_ascii=False)
             data_to_save.append(clean_item)
             
         df = pd.DataFrame(data_to_save)
-        conn.update(worksheet="Orders", data=df)
-        st.cache_data.clear() # Xóa cache để lần sau load lại mới nhất
+        conn.update(spreadsheet=SHEET_URL, worksheet="Orders", data=df)
+        st.cache_data.clear()
     except Exception as e:
         st.error(f"Lỗi lưu Database: {e}")
 
@@ -97,7 +93,7 @@ def load_cash():
     """Tải Sổ quỹ từ Google Sheets"""
     try:
         conn = get_db_connection()
-        df = conn.read(worksheet="Cashbook", ttl=0)
+        df = conn.read(spreadsheet=SHEET_URL, worksheet="Cashbook", ttl=0)
         if df.empty:
             return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
         return df
@@ -108,7 +104,7 @@ def save_cash(df):
     """Lưu Sổ quỹ lên Google Sheets"""
     try:
         conn = get_db_connection()
-        conn.update(worksheet="Cashbook", data=df)
+        conn.update(spreadsheet=SHEET_URL, worksheet="Cashbook", data=df)
         st.cache_data.clear()
     except Exception as e:
         st.error(f"Lỗi lưu Sổ quỹ: {e}")
@@ -116,7 +112,7 @@ def save_cash(df):
 def generate_order_id():
     data = load_db()
     today = datetime.now()
-    year_suffix = today.strftime("%y") # 25
+    year_suffix = today.strftime("%y") 
     count = 0
     if data:
         for item in data:
@@ -145,7 +141,7 @@ def create_pdf(order, doc_type="BÁO GIÁ"):
         pdf.add_font('Arial', 'B', FONT_PATH)
         pdf.add_font('Arial', 'I', FONT_PATH)
     except:
-        st.error(f"Lỗi: Không tìm thấy file font {FONT_PATH}. Hãy copy file Arial.ttf vào thư mục code.")
+        st.error(f"Lỗi: Không tìm thấy file font {FONT_PATH}.")
         return None
 
     pdf.add_page()
@@ -361,7 +357,7 @@ def run_app():
                             created_date = datetime.now().strftime("%d/%m/%Y")
                             comm_status = "Chưa TT"
                             pay_status = "Chưa TT"
-                            data = load_db() # Load current data
+                            data = load_db()
                         else:
                             order_id = st.session_state.editing_order['order_id']
                             status = st.session_state.editing_order['status']
@@ -369,7 +365,7 @@ def run_app():
                             comm_status = st.session_state.editing_order.get('financial', {}).get('commission_status', 'Chưa TT')
                             pay_status = st.session_state.editing_order.get('payment_status', 'Chưa TT')
                             data = load_db()
-                            data = [x for x in data if x.get('order_id') != order_id] # Remove old
+                            data = [x for x in data if x.get('order_id') != order_id]
                         
                         final_order = {
                             "order_id": order_id, "date": created_date, "status": status, "payment_status": pay_status,
@@ -382,7 +378,7 @@ def run_app():
                         save_db(data)
                         st.session_state.cart = []
                         st.session_state.editing_order = None
-                        st.success(f"Đã lưu đơn hàng {order_id} lên Google Sheet!")
+                        st.success(f"Đã lưu thành công đơn hàng {order_id}!")
                         st.rerun()
             with btn_col2:
                 if mode == "EDIT":
