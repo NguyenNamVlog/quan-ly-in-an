@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import json
+import os
 from datetime import datetime
 from fpdf import FPDF
 from docxtpl import DocxTemplate
@@ -14,48 +15,6 @@ FONT_PATH = 'Arial.ttf'
 
 # [1] DÁN LINK GOOGLE SHEET CỦA BẠN VÀO DƯỚI ĐÂY:
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit" 
-
-# [2] CẤU HÌNH KẾT NỐI (Đã được xử lý thủ công từ file JSON của bạn - KHÔNG CẦN SỬA GÌ Ở ĐÂY)
-# Tôi đã định dạng lại Private Key thành chuỗi đa dòng chuẩn Python để tránh lỗi JWT.
-CREDENTIALS_DICT = {
-    "type": "service_account",
-    "project_id": "quanlyinan",
-    "private_key_id": "becc31a465356195dbb8352429f10ec4a76a3dad",
-    "private_key": """-----BEGIN PRIVATE KEY-----
-MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCRixepQSVgPNAl
-kGDUK4pLknV2ayZBPj2hSir4SE2Q0rm1D1fOBJAejCMvV23Crz3H+w9w7+ST08ci
-VQuVpm6Ous4fvZNtU9bzvh4soHWDUib7UqBIhgGs8Zjocs0tf555JxueTEp5Gppv
-8ycfxJ6HjXFUJyiz2WFOwgZXwcDOgiUxD/eKQdxfzDQI4MyvKj+iKA1sVJd6AALH
-kdwybJmMndWCBS/TcSn8ZdSEgn5JNrQnRXBtQVyUZ+uEz3iWupEHPlSlTsmIDyvq
-S5c+/RWLkrL22L2A8BIiQpVEGZc/KBgNOiag2PMX8yTixIbYTMpV6MbXUFYQAh/b
-zJu1ebOZAgMBAAECggEAKyJc9dWP3TDIw4lBmT/6MaGLXHgvE0D+BPI1P/Y1vskl
-LqsIa89gYx1HRD2WEw/asI0Qq3j9dm5aYytvTn/P3k8wzaliqxEg8IYU7Ub07OGJ
-Gg0H4daNYpMLrUBw3J4o+mEDx2t22uNuh+U5YCnmjef2gWlFn9+5/hx0wsdyfAEV
-2HWP5dPpuWmCchkmvpA/+d8KO5laZ2u3bjYOzFnJqnu7GqWtesngSL15tjQZ5RnG
-lrJtkqy2N0YzlJB9CaQfsXvZ4hhuP6jjwG4SRXgcfFdWcErbC+M7HSaPAbnxpIfj
-qGLDd+h+Lk+QUg2yC9jXzT7+ar+x3b/MirGm9LCUzQKBgQDBPESsPYy+Z85bXKgX
-4YLYZtUnk0OHMSNyWeVeBeSYYdvuEbejo+1QZC0G5yJnCcV7gSMopnHNa08g4JBl
-dXbVRePMVMo4eVcfZ3fbtrGvW8GrIe2rVZpQ3bvDsj8OUXxNyOCyXQywFGCfuDWa
-S+6VzIN2nrKauxzX/w7R5uhCtwKBgQDA0Sz7QDcRKpnFRs4HAycSvqbQrAkCrCI1
-6EvhqpD3h1ftVqTTVvIWsKym0Pp/A2W7cYtjqic1lnYH09Ag7Y5r5r0kbA94ACqG
-8Cw6ixjM//zbmon+dHtRkr4YMu4dqUjvjN/yhdTap8MYIY5UYAtVGprywA4PFhU9
-ZAH5b5IsLwKBgQCKw9Pw+LZUmckX1N8lXx2Od7JEnD1XHVN+L85GCedSApxkRzbf
-/b1TCM1I8rzCz8KQYXk1HOoGgTQuwPUQ1xzCJVFkD9O0YHbPJ4dsMbNB4ZufYFsD
-uhJ6VfEbpKohhyTD2yh5Ddcpr0iAClH7/uFTk60ohuhts0cQWapz0+Ug2wKBgQCD
-pc36deujMtzujttYelSRPc6TpwI36uMov0Qf/d8gwi3MhF3hVfnQeCxJcWG2mtE4
-29t53tEKi4Jm8b2m3cth7JazaXxeSG7A1va7ugDi5tzz613QeCNCnNhhmVRuuAhu
-VlcJNUsRR32y2iZdgX37S0EEAREYR9GUqtWWQxEgTQKBgECULpGVDkRGSGLrCPPG
-ep0iMdgunHhHc4Vdk01Nq0y/JGhCYAw1R910nm7jXnJM8C06U7srXWB45ohOC4w7
-hq1C9FMmWriEKSQyoQw1C4H9UePjezwn+MTHIRbQYlUMJQqIjQGMRfr4i+o8v8je
-cZ6vlyaYkVlaKQuZY25/HJA4
------END PRIVATE KEY-----""",
-    "client_email": "quanlyinan@quanlyinan.iam.gserviceaccount.com",
-    "client_id": "105384981732403020965",
-    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-    "token_uri": "https://oauth2.googleapis.com/token",
-    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/quanlyinan%40quanlyinan.iam.gserviceaccount.com",
-}
 
 # --- HÀM TIỆN ÍCH ---
 def format_currency(value):
@@ -72,20 +31,29 @@ def read_money(amount):
     except:
         return "..................... đồng."
 
-# --- KẾT NỐI GOOGLE SHEETS (SỬ DỤNG GSPREAD) ---
-# Hàm này dùng thông tin đăng nhập trực tiếp từ biến CREDENTIALS_DICT bên trên
+# --- KẾT NỐI GOOGLE SHEETS (ĐỌC TỪ FILE service_account.json) ---
 @st.cache_resource
 def get_gspread_client():
+    # Tên file JSON bạn vừa upload
+    key_file = "service_account.json"
+    
+    if not os.path.exists(key_file):
+        st.error(f"⚠️ KHÔNG TÌM THẤY FILE KEY: {key_file}")
+        st.info("Vui lòng upload file JSON từ Google vào cùng thư mục với app.py và đổi tên thành 'service_account.json'")
+        return None
+
     try:
         scope = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
-        creds = Credentials.from_service_account_info(CREDENTIALS_DICT, scopes=scope)
+        
+        # Đọc trực tiếp từ file - Không sợ lỗi copy paste
+        creds = Credentials.from_service_account_file(key_file, scopes=scope)
         client = gspread.authorize(creds)
         return client
     except Exception as e:
-        st.error(f"Lỗi xác thực Google: {e}")
+        st.error(f"Lỗi xác thực (Key bị hỏng hoặc sai): {e}")
         return None
 
 def load_db():
@@ -99,7 +67,6 @@ def load_db():
         data = []
         for item in all_records:
             try:
-                # Parse các cột chứa JSON
                 if isinstance(item.get('customer'), str) and item['customer']:
                     item['customer'] = json.loads(item['customer'])
                 if isinstance(item.get('items'), str) and item['items']:
@@ -113,10 +80,16 @@ def load_db():
     except gspread.WorksheetNotFound:
         return []
     except Exception as e:
-        # Kiểm tra lỗi quyền truy cập
+        # Lấy email từ file json để hướng dẫn share quyền
+        try:
+            with open("service_account.json", "r") as f:
+                email = json.load(f).get("client_email", "Robot")
+        except:
+            email = "service account"
+
         if "403" in str(e):
-            st.error("⚠️ LỖI QUYỀN TRUY CẬP: Bạn chưa chia sẻ file cho Robot.")
-            st.info(f"Hãy chia sẻ quyền Editor cho email: **{CREDENTIALS_DICT['client_email']}**")
+            st.error("⚠️ LỖI QUYỀN TRUY CẬP GOOGLE SHEET")
+            st.warning(f"Bạn chưa chia sẻ file Sheet cho robot.\nHãy copy email này: **{email}**\nVào Google Sheet -> Nút 'Chia sẻ' -> Dán email vào -> Chọn quyền 'Người chỉnh sửa'.")
         else:
             st.error(f"Lỗi tải dữ liệu: {e}")
         return []
@@ -177,7 +150,6 @@ def save_cash(df):
         
         worksheet.clear()
         if not df.empty:
-            # Chuyển đổi ngày tháng sang chuỗi
             df_save = df.copy()
             df_save['Ngày'] = df_save['Ngày'].astype(str)
             worksheet.update([df_save.columns.values.tolist()] + df_save.values.tolist())
