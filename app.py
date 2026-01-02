@@ -285,10 +285,11 @@ def create_pdf(order, title):
     pdf.cell(40, 8, format_currency(total_vat), 1, 1, 'R')
     pdf.ln(8)
     
-    pdf.set_font_style('B')
+    # --- SỬA LỖI FONT STYLE Ở ĐÂY ---
+    pdf.set_font(style='B') # Thay vì pdf.set_font_style('B')
     pdf.cell(150, 8, txt("TỔNG CỘNG THANH TOÁN:"), 1, 0, 'R')
     pdf.cell(40, 8, format_currency(final_total), 1, 1, 'R')
-    pdf.set_font_style('')
+    pdf.set_font(style='') # Thay vì pdf.set_font_style('')
     pdf.ln(10)
     
     money_text = ""
