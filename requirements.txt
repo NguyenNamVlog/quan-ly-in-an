@@ -11,4 +11,5 @@ docxtpl
 plotly
 num2words
 openpyxl
+gspread
 st-gsheets-connection
