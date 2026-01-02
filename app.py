@@ -5,7 +5,8 @@ from datetime import datetime
 from fpdf import FPDF
 from docxtpl import DocxTemplate
 from num2words import num2words
-from streamlit_gsheets import GSheetsConnection
+import gspread
+from google.oauth2.service_account import Credentials
 
 # --- CẤU HÌNH HỆ THỐNG ---
 TEMPLATE_CONTRACT = 'Hop dong .docx' 
@@ -14,7 +15,7 @@ FONT_PATH = 'Arial.ttf'
 # [1] DÁN LINK GOOGLE SHEET CỦA BẠN VÀO DƯỚI ĐÂY:
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit" 
 
-# [2] THÔNG TIN ĐĂNG NHẬP
+# [2] THÔNG TIN ĐĂNG NHẬP (Giữ nguyên Dictionary này)
 CREDENTIALS_DICT = {
     "type": "service_account",
     "project_id": "quanlyinan",
@@ -44,54 +45,69 @@ def read_money(amount):
     except:
         return "..................... đồng."
 
-# --- QUẢN LÝ DATABASE (ĐÃ SỬA LỖI TRÙNG TYPE) ---
-def get_db_connection():
+# --- KẾT NỐI GOOGLE SHEETS (DÙNG GSPREAD TRỰC TIẾP - BAO KHÔNG LỖI) ---
+@st.cache_resource
+def get_gspread_client():
     try:
-        # Tạo bản sao của cấu hình để xử lý
-        creds = CREDENTIALS_DICT.copy()
-        
-        # [QUAN TRỌNG] Xóa key 'type' trong dict để tránh xung đột với tham số của st.connection
-        if "type" in creds:
-            del creds["type"]
-
-        # Truyền các tham số còn lại vào
-        conn = st.connection("gsheets", type=GSheetsConnection, **creds)
-        return conn
+        scope = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds = Credentials.from_service_account_info(CREDENTIALS_DICT, scopes=scope)
+        client = gspread.authorize(creds)
+        return client
     except Exception as e:
-        st.error(f"Lỗi kết nối: {e}")
+        st.error(f"Lỗi xác thực Google: {e}")
         return None
 
 def load_db():
+    client = get_gspread_client()
+    if not client: return []
     try:
-        conn = get_db_connection()
-        if conn is None: return []
-        df = conn.read(spreadsheet=SHEET_URL, worksheet="Orders", ttl=0)
+        # Mở file bằng URL
+        sh = client.open_by_url(SHEET_URL)
+        worksheet = sh.worksheet("Orders")
         
-        if df.empty: return []
+        # Lấy tất cả dữ liệu
+        all_records = worksheet.get_all_records()
         
+        # Parse JSON
         data = []
-        for _, row in df.iterrows():
-            item = row.to_dict()
+        for item in all_records:
             try:
-                if isinstance(item.get('customer'), str): item['customer'] = json.loads(item['customer'])
-                if isinstance(item.get('items'), str): item['items'] = json.loads(item['items'])
-                if isinstance(item.get('financial'), str): item['financial'] = json.loads(item['financial'])
-            except: continue
-            data.append(item)
+                # Gspread trả về dict, ta chỉ cần parse các field JSON string
+                if isinstance(item.get('customer'), str) and item['customer']:
+                    item['customer'] = json.loads(item['customer'])
+                if isinstance(item.get('items'), str) and item['items']:
+                    item['items'] = json.loads(item['items'])
+                if isinstance(item.get('financial'), str) and item['financial']:
+                    item['financial'] = json.loads(item['financial'])
+                data.append(item)
+            except:
+                continue
         return data
+    except gspread.WorksheetNotFound:
+        # Nếu chưa có sheet Orders, tạo mới (tuỳ chọn)
+        return []
     except Exception as e:
+        st.error(f"Lỗi tải đơn hàng: {e}")
         return []
 
 def save_db(data):
+    client = get_gspread_client()
+    if not client: return
     try:
-        conn = get_db_connection()
-        if conn is None: return
+        sh = client.open_by_url(SHEET_URL)
+        try:
+            worksheet = sh.worksheet("Orders")
+        except:
+            worksheet = sh.add_worksheet(title="Orders", rows=1000, cols=20)
 
         if not data:
-            df = pd.DataFrame()
-            conn.update(spreadsheet=SHEET_URL, worksheet="Orders", data=df)
+            worksheet.clear()
             return
 
+        # Chuẩn bị dữ liệu để lưu
         data_to_save = []
         for item in data:
             clean_item = item.copy()
@@ -99,29 +115,43 @@ def save_db(data):
             clean_item['items'] = json.dumps(item['items'], ensure_ascii=False)
             clean_item['financial'] = json.dumps(item['financial'], ensure_ascii=False)
             data_to_save.append(clean_item)
-            
+        
         df = pd.DataFrame(data_to_save)
-        conn.update(spreadsheet=SHEET_URL, worksheet="Orders", data=df)
+        
+        # Ghi dữ liệu: Xóa cũ -> Ghi mới (Gồm cả Header)
+        worksheet.clear()
+        # set_with_dataframe của gspread yêu cầu list of lists
+        worksheet.update([df.columns.values.tolist()] + df.values.tolist())
         st.cache_data.clear()
+        
     except Exception as e:
         st.error(f"Lỗi lưu Database: {e}")
 
 def load_cash():
+    client = get_gspread_client()
+    if not client: return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
     try:
-        conn = get_db_connection()
-        if conn is None: return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
-        
-        df = conn.read(spreadsheet=SHEET_URL, worksheet="Cashbook", ttl=0)
-        if df.empty: return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
-        return df
+        sh = client.open_by_url(SHEET_URL)
+        worksheet = sh.worksheet("Cashbook")
+        data = worksheet.get_all_records()
+        if not data:
+            return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
+        return pd.DataFrame(data)
     except:
         return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
 
 def save_cash(df):
+    client = get_gspread_client()
+    if not client: return
     try:
-        conn = get_db_connection()
-        if conn is None: return
-        conn.update(spreadsheet=SHEET_URL, worksheet="Cashbook", data=df)
+        sh = client.open_by_url(SHEET_URL)
+        try:
+            worksheet = sh.worksheet("Cashbook")
+        except:
+            worksheet = sh.add_worksheet(title="Cashbook", rows=1000, cols=10)
+        
+        worksheet.clear()
+        worksheet.update([df.columns.values.tolist()] + df.values.tolist())
         st.cache_data.clear()
     except Exception as e:
         st.error(f"Lỗi lưu Sổ quỹ: {e}")
@@ -133,7 +163,7 @@ def generate_order_id():
     count = 0
     if data:
         for item in data:
-            if item.get('order_id', '').endswith(f".{year_suffix}"):
+            if isinstance(item, dict) and item.get('order_id', '').endswith(f".{year_suffix}"):
                 count += 1
     return f"{count + 1:03d}/ĐHALP.{year_suffix}"
 
