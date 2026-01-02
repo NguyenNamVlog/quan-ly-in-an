@@ -202,7 +202,7 @@ def gen_id():
         if str(o.get('order_id', '')).endswith(year): count += 1
     return f"{count+1:03d}/DH.{year}"
 
-# --- PDF GENERATOR ---
+# --- PDF GENERATOR (ĐÃ SỬA LỖI KHOẢNG TRẮNG) ---
 class PDFGen(FPDF):
     def header(self): pass
 
@@ -224,7 +224,7 @@ def create_pdf(order, title):
         text = str(text)
         return remove_accents(text) if SAFE_MODE else text
 
-    # --- 1. CHÈN HÌNH HOẶC TEXT TIÊU ĐỀ ---
+    # --- 1. HEADER ---
     if os.path.exists(HEADER_IMAGE):
         try:
             pdf.image(HEADER_IMAGE, x=10, y=10, w=190)
@@ -240,7 +240,7 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt('Số tài khoản: 451557254 – Ngân hàng TMCP Việt Nam Thịnh Vượng - CN Đồng Nai'), 0, 1, 'C')
         pdf.ln(2)
 
-    # --- 2. TIÊU ĐỀ PHIẾU ---
+    # --- 2. TITLE ---
     pdf.set_font_size(16)
     pdf.cell(0, 8, txt(title), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.set_font_size(11)
@@ -260,9 +260,9 @@ def create_pdf(order, title):
     cust = order.get('customer', {})
     items = order.get('items', [])
     
-    # --- 3. THÔNG TIN KHÁCH HÀNG ---
+    # --- 3. CUSTOMER INFO ---
     pdf.cell(0, 6, txt(f"Mã số: {oid} | Ngày: {odate}"), new_x="LMARGIN", new_y="NEXT", align='C')
-    pdf.ln(1) 
+    pdf.ln(1)
     pdf.cell(0, 6, txt(f"Khách hàng: {cust.get('name', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 6, txt(f"Điện thoại: {cust.get('phone', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 6, txt(f"Địa chỉ: {cust.get('address', '')}"), new_x="LMARGIN", new_y="NEXT")
@@ -271,8 +271,7 @@ def create_pdf(order, title):
     pdf.multi_cell(0, 5, txt(intro_text))
     pdf.ln(2)
     
-    # --- 4. BẢNG HÀNG HÓA ---
-    # Header
+    # --- 4. TABLE (NO GAPS) ---
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(10, 8, "STT", 1, 0, 'C', 1)
     pdf.cell(75, 8, txt("Tên hàng / Quy cách"), 1, 0, 'C', 1)
@@ -280,7 +279,7 @@ def create_pdf(order, title):
     pdf.cell(15, 8, "SL", 1, 0, 'C', 1)
     pdf.cell(35, 8, txt("Đơn giá"), 1, 0, 'C', 1)
     pdf.cell(40, 8, txt("Thành tiền"), 1, 1, 'C', 1)
-    pdf.ln(8) 
+    # Tự động xuống dòng sau header, không cần ln() thêm
     
     sum_items_total = 0
     total_vat = 0
@@ -297,29 +296,28 @@ def create_pdf(order, title):
         sum_items_total += line_total
         total_vat += vat_val
         
-        # [FIX] Đã XÓA pdf.ln(8) để các dòng dính liền nhau
+        # In hàng (border=1 để dính liền)
         pdf.cell(10, 8, str(i+1), 1, 0, 'C')
         pdf.cell(75, 8, txt(item.get('name', '')), 1, 0)
         pdf.cell(15, 8, txt(item.get('unit', '')), 1, 0, 'C')
         pdf.cell(15, 8, txt(str(item.get('qty', 0))), 1, 0, 'C')
         pdf.cell(35, 8, format_currency(price), 1, 0, 'R')
+        # Cell cuối cùng có ln=1 để tự xuống dòng, KHÔNG dùng pdf.ln() thêm
         pdf.cell(40, 8, format_currency(line_total), 1, 1, 'R')
-        pdf.ln(8) # Xuống dòng cho hàng tiếp theo
     
     final_total = sum_items_total + total_vat
     
-    # Tổng kết - [FIX] Dùng border=1 để tạo khung dính liền với bảng trên
+    # Tổng kết (Cũng dùng cell liền mạch)
     pdf.cell(150, 8, txt("Cộng tiền hàng:"), 1, 0, 'R')
     pdf.cell(40, 8, format_currency(sum_items_total), 1, 1, 'R')
-    pdf.ln(8)
     
     pdf.cell(150, 8, txt(f"Tiền VAT:"), 1, 0, 'R')
     pdf.cell(40, 8, format_currency(total_vat), 1, 1, 'R')
-    pdf.ln(8)
     
     pdf.cell(150, 8, txt("TỔNG CỘNG THANH TOÁN:"), 1, 0, 'R')
     pdf.cell(40, 8, format_currency(final_total), 1, 1, 'R')
-    pdf.ln(10)
+    
+    pdf.ln(5) # Khoảng cách nhỏ trước khi viết bằng chữ
     
     money_text = ""
     if SAFE_MODE: money_text = f"Tong cong: {format_currency(final_total)} VND"
@@ -329,9 +327,8 @@ def create_pdf(order, title):
     pdf.multi_cell(0, 6, txt(f"Bằng chữ: {money_text}"))
     pdf.ln(3)
 
-    # --- 5. CHỮ KÝ ---
-    pdf.set_x(10) 
-    
+    # --- 5. SIGNATURE ---
+    pdf.set_x(10)
     if is_delivery:
         pdf.cell(95, 5, txt("NGƯỜI NHẬN"), 0, 0, 'C')
         pdf.cell(95, 5, txt("NGƯỜI GIAO"), 0, 1, 'C')
