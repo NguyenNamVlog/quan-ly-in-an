@@ -14,8 +14,8 @@ FONT_PATH = 'Arial.ttf'
 # [1] DÁN LINK GOOGLE SHEET CỦA BẠN VÀO DƯỚI ĐÂY:
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit" 
 
-# [2] THÔNG TIN ĐĂNG NHẬP (ĐÚNG CHUẨN PYTHON DICTIONARY)
-# Lưu ý: Tôi đã thay dấu '=' thành dấu ':' để không bị lỗi SyntaxError
+# [2] THÔNG TIN ĐĂNG NHẬP (ĐÃ SỬA LỖI CÚ PHÁP)
+# Lưu ý: Đã dùng dấu hai chấm (:) thay vì dấu bằng (=) để không bị lỗi SyntaxError
 CREDENTIALS_DICT = {
     "type": "service_account",
     "project_id": "quanlyinan",
