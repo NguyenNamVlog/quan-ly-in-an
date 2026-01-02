@@ -11,7 +11,6 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # --- CẤU HÌNH HỆ THỐNG ---
-# Thay vì dùng file local, ta dùng URL Google Sheet
 TEMPLATE_CONTRACT = 'Hop dong .docx' 
 FONT_PATH = 'Arial.ttf'
 
@@ -33,13 +32,13 @@ def read_money(amount):
     except:
         return "..................... đồng."
 
-# --- KẾT NỐI GOOGLE SHEETS (THAY THẾ FILE LOCAL) ---
+# --- KẾT NỐI GOOGLE SHEETS (Backend thay thế cho file JSON/CSV) ---
 @st.cache_resource
 def get_gspread_client():
     try:
-        # Kiểm tra xem secrets đã được cấu hình chưa
+        # Kiểm tra secrets
         if "service_account" not in st.secrets:
-            st.error("⚠️ Chưa cấu hình Secrets! Vui lòng vào Settings -> Secrets để dán thông tin JSON.")
+            st.error("⚠️ Chưa cấu hình Secrets! Vui lòng vào Settings -> Secrets.")
             return None
 
         # Lấy thông tin từ Secrets
@@ -61,7 +60,7 @@ def get_gspread_client():
         st.error(f"Lỗi xác thực Google: {e}")
         return None
 
-# --- QUẢN LÝ DATABASE (ĐÃ UPDATE SANG GOOGLE SHEETS) ---
+# --- QUẢN LÝ DATABASE (ORDERS) ---
 def load_db():
     client = get_gspread_client()
     if not client: return []
@@ -73,7 +72,7 @@ def load_db():
         data = []
         for item in all_records:
             try:
-                # Parse JSON từ các cột lưu trữ dạng string
+                # Parse JSON string từ các cột lưu trữ
                 if isinstance(item.get('customer'), str) and item['customer']:
                     item['customer'] = json.loads(item['customer'])
                 if isinstance(item.get('items'), str) and item['items']:
@@ -85,7 +84,7 @@ def load_db():
                 continue
         return data
     except gspread.WorksheetNotFound:
-        return [] # Trả về rỗng nếu chưa có sheet
+        return []
     except Exception as e:
         # st.error(f"Lỗi tải DB: {e}")
         return []
@@ -104,7 +103,7 @@ def save_db(data):
             worksheet.clear()
             return
 
-        # Chuẩn bị dữ liệu (Dump JSON object thành string để lưu vào Sheet)
+        # Chuyển đổi dữ liệu thành dạng phẳng để lưu vào Sheet
         data_to_save = []
         for item in data:
             clean_item = item.copy()
@@ -117,12 +116,12 @@ def save_db(data):
         
         worksheet.clear()
         if not df.empty:
-            # Update cả header và values
             worksheet.update([df.columns.values.tolist()] + df.values.tolist())
         st.cache_data.clear()
     except Exception as e:
         st.error(f"Lỗi lưu Database: {e}")
 
+# --- QUẢN LÝ SỔ QUỸ (CASHBOOK) ---
 def load_cash():
     client = get_gspread_client()
     if not client: return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
@@ -148,7 +147,7 @@ def save_cash(df):
         
         worksheet.clear()
         if not df.empty:
-            # Chuyển ngày thành string để tránh lỗi
+            # Chuyển ngày tháng thành chuỗi để tránh lỗi JSON
             df_save = df.copy()
             df_save['Ngày'] = df_save['Ngày'].astype(str)
             worksheet.update([df_save.columns.values.tolist()] + df_save.values.tolist())
@@ -315,7 +314,6 @@ def run_app():
     st.sidebar.title("MENU QUẢN LÝ")
     menu = st.sidebar.radio("Chức năng:", ["1. Lên Đơn Mới / Sửa Đơn", "2. Quản Lý Đơn Hàng", "3. Quản Lý Tiền Mặt", "4. Báo Cáo"])
 
-    # Session State cho giỏ hàng
     if 'cart' not in st.session_state: st.session_state.cart = []
     if 'editing_order' not in st.session_state: st.session_state.editing_order = None
 
