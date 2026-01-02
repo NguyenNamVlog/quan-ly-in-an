@@ -18,7 +18,10 @@ FONT_PATH = 'Arial.ttf'
 # --- HÀM HỖ TRỢ ---
 def format_currency(value):
     if value is None: return "0"
-    return "{:,.0f}".format(float(value))
+    try:
+        return "{:,.0f}".format(float(value))
+    except:
+        return "0"
 
 def read_money_vietnamese(amount):
     try:
@@ -60,9 +63,16 @@ def fetch_all_orders():
         for row in raw_data:
             try:
                 # Nếu là string JSON thì parse, nếu là dict rồi thì giữ nguyên
-                row['customer'] = json.loads(row['customer']) if isinstance(row['customer'], str) else row['customer']
-                row['items'] = json.loads(row['items']) if isinstance(row['items'], str) else row['items']
-                row['financial'] = json.loads(row['financial']) if isinstance(row['financial'], str) else row['financial']
+                # Sử dụng get() để tránh lỗi KeyError nếu cột không tồn tại
+                cust_data = row.get('customer', '{}')
+                row['customer'] = json.loads(cust_data) if isinstance(cust_data, str) and cust_data else (cust_data if isinstance(cust_data, dict) else {})
+                
+                items_data = row.get('items', '[]')
+                row['items'] = json.loads(items_data) if isinstance(items_data, str) and items_data else (items_data if isinstance(items_data, list) else [])
+                
+                fin_data = row.get('financial', '{}')
+                row['financial'] = json.loads(fin_data) if isinstance(fin_data, str) and fin_data else (fin_data if isinstance(fin_data, dict) else {})
+                
                 processed_data.append(row)
             except: continue
         return processed_data
@@ -71,7 +81,7 @@ def fetch_all_orders():
         return []
 
 def update_order_status(order_id, new_status, new_payment_status=None, paid_amount=0):
-    """Cập nhật trạng thái đơn hàng - Logic cốt lõi của Pipeline"""
+    """Cập nhật trạng thái đơn hàng"""
     client = get_gspread_client()
     if not client: return False
     try:
@@ -97,7 +107,7 @@ def update_order_status(order_id, new_status, new_payment_status=None, paid_amou
         if paid_amount > 0:
             # Lấy data cũ
             current_fin_str = ws.cell(row_idx, 7).value
-            current_fin = json.loads(current_fin_str)
+            current_fin = json.loads(current_fin_str) if current_fin_str else {}
             
             # Tính toán lại
             current_fin['paid'] = float(current_fin.get('paid', 0)) + float(paid_amount)
@@ -155,6 +165,15 @@ def save_cash_log(date, type_, amount, desc):
         st.cache_data.clear()
     except: pass
 
+def fetch_cashbook():
+    client = get_gspread_client()
+    if not client: return []
+    try:
+        sh = client.open_by_url(SHEET_URL)
+        ws = sh.worksheet("Cashbook")
+        return ws.get_all_records()
+    except: return []
+
 def gen_id():
     # Sinh mã đơn hàng tự động
     orders = fetch_all_orders()
@@ -162,7 +181,7 @@ def gen_id():
     count = len([o for o in orders if str(o.get('order_id')).endswith(year)])
     return f"{count+1:03d}/DH.{year}"
 
-# --- PDF GENERATOR (GIỮ NGUYÊN) ---
+# --- PDF GENERATOR ---
 class PDFGen(FPDF):
     def header(self):
         try:
@@ -178,16 +197,21 @@ def create_pdf(order, title):
     try: pdf.add_font('Arial', '', FONT_PATH, uni=True); pdf.set_font('Arial', '', 11)
     except: pdf.set_font('Arial', '', 11)
     
+    # Safely get values
+    oid = order.get('order_id', '')
+    odate = order.get('date', '')
+    cust = order.get('customer', {})
+    items = order.get('items', [])
+    
     pdf.set_font_size(16)
     pdf.cell(0, 10, title, 0, 1, 'C')
     pdf.set_font_size(11)
-    pdf.cell(0, 8, f"Mã: {order['order_id']} | Ngày: {order['date']}", 0, 1, 'C')
+    pdf.cell(0, 8, f"Mã: {oid} | Ngày: {odate}", 0, 1, 'C')
     pdf.ln(5)
     
-    cust = order['customer']
-    pdf.cell(0, 7, f"Khách hàng: {cust.get('name')}", 0, 1)
-    pdf.cell(0, 7, f"SĐT: {cust.get('phone')}", 0, 1)
-    pdf.cell(0, 7, f"Địa chỉ: {cust.get('address')}", 0, 1)
+    pdf.cell(0, 7, f"Khách hàng: {cust.get('name', '')}", 0, 1)
+    pdf.cell(0, 7, f"SĐT: {cust.get('phone', '')}", 0, 1)
+    pdf.cell(0, 7, f"Địa chỉ: {cust.get('address', '')}", 0, 1)
     pdf.ln(5)
     
     # Table Header
@@ -199,13 +223,14 @@ def create_pdf(order, title):
     pdf.cell(40, 8, "Thành tiền", 1, 1, 'C', 1)
     
     total = 0
-    for i, item in enumerate(order['items']):
-        total += item['total']
+    for i, item in enumerate(items):
+        item_total = float(item.get('total', 0))
+        total += item_total
         pdf.cell(10, 8, str(i+1), 1, 0, 'C')
-        pdf.cell(80, 8, str(item['name']), 1, 0)
-        pdf.cell(20, 8, str(item['qty']), 1, 0, 'C')
-        pdf.cell(30, 8, format_currency(item['price']), 1, 0, 'R')
-        pdf.cell(40, 8, format_currency(item['total']), 1, 1, 'R')
+        pdf.cell(80, 8, str(item.get('name', '')), 1, 0)
+        pdf.cell(20, 8, str(item.get('qty', 0)), 1, 0, 'C')
+        pdf.cell(30, 8, format_currency(item.get('price', 0)), 1, 0, 'R')
+        pdf.cell(40, 8, format_currency(item_total), 1, 1, 'R')
     
     pdf.cell(140, 8, "TỔNG CỘNG:", 1, 0, 'R')
     pdf.cell(40, 8, format_currency(total), 1, 1, 'R')
@@ -237,8 +262,7 @@ def main():
             staff = st.selectbox("Nhân Viên Kinh Doanh", ["Nam", "Dương", "Thảo", "Khác"])
             
             st.divider()
-            st.write("San Phẩm:")
-            # Giản lược: Nhập 1 sản phẩm chính (Có thể nâng cấp thêm nhiều dòng sau)
+            st.write("Sản Phẩm:")
             c3, c4, c5 = st.columns([3, 1, 2])
             i_name = c3.text_input("Tên hàng / Quy cách")
             i_qty = c4.number_input("Số lượng", 1, step=1)
@@ -254,7 +278,7 @@ def main():
                     new_order = {
                         "order_id": gen_id(),
                         "date": datetime.now().strftime("%Y-%m-%d"),
-                        "status": "Báo giá", # Trạng thái bắt đầu
+                        "status": "Báo giá", 
                         "payment_status": "Chưa TT",
                         "customer": {"name": name, "phone": phone, "address": addr},
                         "items": [{"name": i_name, "qty": i_qty, "price": i_price, "total": total}],
@@ -267,10 +291,8 @@ def main():
     elif menu == "2. Quản Lý Đơn Hàng (Pipeline)":
         st.title("🏭 Quy Trình Sản Xuất")
         
-        # Load tất cả dữ liệu 1 lần
         all_orders = fetch_all_orders()
         
-        # Chia Tab theo đúng quy trình
         tabs = st.tabs([
             "1️⃣ Báo Giá", 
             "2️⃣ Thiết Kế", 
@@ -282,166 +304,157 @@ def main():
         
         # === 1. BÁO GIÁ ===
         with tabs[0]:
-            orders = [o for o in all_orders if o['status'] == 'Báo giá']
+            orders = [o for o in all_orders if o.get('status') == 'Báo giá']
             if not orders: st.info("Không có báo giá nào đang chờ.")
             for o in orders:
-                with st.expander(f"📄 {o['order_id']} | {o['customer']['name']} | {format_currency(o['financial']['total'])}"):
+                # SỬA LỖI Ở ĐÂY: Dùng .get() để tránh lỗi thiếu key
+                oid = o.get('order_id', 'Unknown')
+                cname = o.get('customer', {}).get('name', 'Khách lẻ')
+                total_val = o.get('financial', {}).get('total', 0)
+                
+                with st.expander(f"📄 {oid} | {cname} | {format_currency(total_val)}"):
                     c1, c2 = st.columns(2)
-                    # Output: In Báo Giá
                     pdf = create_pdf(o, "BÁO GIÁ")
-                    if pdf: c1.download_button("🖨️ Tải File PDF Báo Giá", pdf, f"BG_{o['order_id']}.pdf")
+                    if pdf: c1.download_button("🖨️ Tải PDF Báo Giá", pdf, f"BG_{oid}.pdf")
                     
-                    # Action: Duyệt -> Thiết kế
-                    if c2.button("✅ DUYỆT -> CHUYỂN THIẾT KẾ", key=f"to_des_{o['order_id']}"):
-                        update_order_status(o['order_id'], "Thiết kế")
+                    if c2.button("✅ Duyệt -> Thiết Kế", key=f"app_{oid}"):
+                        update_order_status(oid, "Thiết kế")
                         st.rerun()
 
         # === 2. THIẾT KẾ ===
         with tabs[1]:
-            orders = [o for o in all_orders if o['status'] == 'Thiết kế']
+            orders = [o for o in all_orders if o.get('status') == 'Thiết kế']
             if not orders: st.info("Trống.")
             for o in orders:
-                with st.expander(f"🎨 {o['order_id']} | {o['customer']['name']}"):
-                    st.write(f"Sản phẩm: {o['items'][0]['name']}")
-                    # Action: Xong -> Sản xuất
-                    if st.button("✅ DUYỆT THIẾT KẾ -> CHUYỂN SẢN XUẤT", key=f"to_prod_{o['order_id']}"):
-                        update_order_status(o['order_id'], "Sản xuất")
+                oid = o.get('order_id')
+                cname = o.get('customer', {}).get('name')
+                with st.expander(f"🎨 {oid} | {cname}"):
+                    if st.button("✅ Duyệt TK -> Sản Xuất", key=f"des_{oid}"):
+                        update_order_status(oid, "Sản xuất")
                         st.rerun()
 
         # === 3. SẢN XUẤT ===
         with tabs[2]:
-            orders = [o for o in all_orders if o['status'] == 'Sản xuất']
+            orders = [o for o in all_orders if o.get('status') == 'Sản xuất']
             if not orders: st.info("Trống.")
             for o in orders:
-                with st.expander(f"⚙️ {o['order_id']} | {o['customer']['name']}"):
-                    st.warning("Đang trong quá trình in ấn...")
-                    # Action: Xong -> Giao hàng
-                    if st.button("✅ SẢN XUẤT XONG -> CHUYỂN GIAO HÀNG", key=f"to_ship_{o['order_id']}"):
-                        update_order_status(o['order_id'], "Giao hàng")
+                oid = o.get('order_id')
+                cname = o.get('customer', {}).get('name')
+                with st.expander(f"⚙️ {oid} | {cname}"):
+                    if st.button("✅ Xong -> Giao Hàng", key=f"prod_{oid}"):
+                        update_order_status(oid, "Giao hàng")
                         st.rerun()
 
         # === 4. GIAO HÀNG ===
         with tabs[3]:
-            orders = [o for o in all_orders if o['status'] == 'Giao hàng']
+            orders = [o for o in all_orders if o.get('status') == 'Giao hàng']
             if not orders: st.info("Trống.")
             for o in orders:
-                with st.expander(f"🚚 {o['order_id']} | {o['customer']['name']}"):
+                oid = o.get('order_id')
+                cname = o.get('customer', {}).get('name')
+                with st.expander(f"🚚 {oid} | {cname}"):
                     c1, c2 = st.columns(2)
-                    # Output: Phiếu giao hàng
-                    pdf = create_pdf(o, "PHIẾU GIAO HÀNG")
-                    if pdf: c1.download_button("🖨️ In Phiếu Giao Hàng", pdf, f"GH_{o['order_id']}.pdf")
-                    
-                    # Output: Hợp đồng (Word demo)
-                    c1.download_button("📝 Xuất Hợp Đồng (Word)", b"Demo", "HopDong.docx", disabled=True)
-
-                    # Action: Giao xong -> Công nợ
-                    if c2.button("✅ ĐÃ GIAO XONG -> CHUYỂN CÔNG NỢ", key=f"to_debt_{o['order_id']}"):
-                        update_order_status(o['order_id'], "Công nợ")
+                    pdf_gh = create_pdf(o, "PHIẾU GIAO HÀNG")
+                    if pdf_gh: c1.download_button("🖨️ In Phiếu Giao", pdf_gh, f"GH_{oid}.pdf")
+                    if c2.button("✅ Giao Xong -> Công Nợ", key=f"del_{oid}"):
+                        update_order_status(oid, "Công nợ")
                         st.rerun()
 
-        # === 5. CÔNG NỢ (THU TIỀN) ===
+        # === 5. CÔNG NỢ ===
         with tabs[4]:
-            orders = [o for o in all_orders if o['status'] == 'Công nợ']
+            orders = [o for o in all_orders if o.get('status') == 'Công nợ']
             if not orders: st.info("Hết nợ.")
             for o in orders:
-                fin = o['financial']
-                debt = float(fin['total']) - float(fin.get('paid', 0))
+                oid = o.get('order_id')
+                cname = o.get('customer', {}).get('name')
+                fin = o.get('financial', {})
+                debt = float(fin.get('total', 0)) - float(fin.get('paid', 0))
                 
-                with st.expander(f"💰 {o['order_id']} | {o['customer']['name']} | Còn nợ: {format_currency(debt)}"):
+                with st.expander(f"💰 {oid} | {cname} | Nợ: {format_currency(debt)}"):
                     c1, c2 = st.columns(2)
-                    pay_val = c1.number_input("Số tiền khách trả:", 0.0, float(debt), float(debt), key=f"pay_{o['order_id']}")
-                    
-                    if c2.button("💸 XÁC NHẬN THU TIỀN", key=f"conf_pay_{o['order_id']}"):
-                        new_debt = debt - pay_val
-                        new_status = "Công nợ"
-                        new_pay_st = "Cọc/Còn nợ"
-                        
-                        # Logic: Hết nợ thì hoàn thành
-                        if new_debt <= 0:
-                            new_status = "Hoàn thành"
-                            new_pay_st = "Đã TT"
-                        
-                        # Cập nhật Order & Ghi Sổ Quỹ
-                        update_order_status(o['order_id'], new_status, new_pay_st, pay_val)
-                        save_cash_log(datetime.now().strftime("%Y-%m-%d"), "Thu", pay_val, f"Thu tiền đơn {o['order_id']}")
-                        
-                        st.success("Đã thu tiền thành công!")
+                    pay_val = c1.number_input("Số tiền thu:", 0.0, float(debt), float(debt), key=f"pay_{oid}")
+                    if c2.button("Thu Tiền", key=f"conf_pay_{oid}"):
+                        new_status = "Hoàn thành" if (debt - pay_val) <= 0 else "Công nợ"
+                        pay_st = "Đã TT" if (debt - pay_val) <= 0 else "Cọc/Còn nợ"
+                        update_order_status(oid, new_status, pay_st, pay_val)
+                        save_cash_log(datetime.now().strftime("%Y-%m-%d"), "Thu", pay_val, f"Thu đơn {oid}")
+                        st.success("Đã thu tiền!")
                         time.sleep(1)
                         st.rerun()
 
         # === 6. HOÀN THÀNH ===
         with tabs[5]:
-            orders = [o for o in all_orders if o['status'] == 'Hoàn thành']
-            if not orders: st.info("Chưa có đơn hoàn thành.")
-            else:
+            orders = [o for o in all_orders if o.get('status') == 'Hoàn thành']
+            if orders:
                 df = pd.DataFrame([{
-                    "Mã": o['order_id'],
-                    "Khách": o['customer']['name'],
-                    "Tổng tiền": format_currency(o['financial']['total']),
-                    "Ngày": o['date']
-                } for o in orders])
+                    "Mã": x.get('order_id'), 
+                    "Khách": x.get('customer', {}).get('name'), 
+                    "Tổng": format_currency(x.get('financial', {}).get('total', 0)), 
+                    "Ngày": x.get('date')
+                } for x in orders])
                 st.dataframe(df, use_container_width=True)
 
     # --- TAB 3: SỔ QUỸ & BÁO CÁO ---
     elif menu == "3. Sổ Quỹ & Báo Cáo":
-        st.title("📊 Thống Kê & Tài Chính")
+        st.title("📊 Tài Chính & Báo Cáo")
         
         tab1, tab2 = st.tabs(["Sổ Quỹ Tiền Mặt", "Báo Cáo Hiệu Suất"])
         
         with tab1:
-            # Load Cashbook
-            client = get_gspread_client()
-            try:
-                sh = client.open_by_url(SHEET_URL)
-                ws = sh.worksheet("Cashbook")
-                cash_data = ws.get_all_records()
-                df_cash = pd.DataFrame(cash_data)
+            cash_records = fetch_cashbook()
+            df_cash = pd.DataFrame(cash_records)
+            
+            if not df_cash.empty:
+                df_cash['amount'] = pd.to_numeric(df_cash['amount'], errors='coerce').fillna(0)
+                total_thu = df_cash[df_cash['type'] == 'Thu']['amount'].sum()
+                total_chi = df_cash[df_cash['type'] == 'Chi']['amount'].sum()
+                ton_quy = total_thu - total_chi
                 
-                # Form nhập chi
-                with st.form("add_expense"):
-                    st.write("Nhập chi phí phát sinh:")
-                    c1, c2, c3 = st.columns(3)
-                    d = c1.date_input("Ngày")
-                    a = c2.number_input("Số tiền chi", 0, step=10000)
-                    desc = c3.text_input("Nội dung chi")
-                    if st.form_submit_button("Lưu Chi Phí"):
-                        save_cash_log(d, "Chi", a, desc)
-                        st.rerun()
-                
-                if not df_cash.empty:
-                    df_cash['amount'] = pd.to_numeric(df_cash['amount'])
-                    thu = df_cash[df_cash['type'] == 'Thu']['amount'].sum()
-                    chi = df_cash[df_cash['type'] == 'Chi']['amount'].sum()
-                    
-                    k1, k2, k3 = st.columns(3)
-                    k1.metric("Tổng Thu", format_currency(thu))
-                    k2.metric("Tổng Chi", format_currency(chi))
-                    k3.metric("Tồn Quỹ", format_currency(thu - chi))
-                    
-                    st.dataframe(df_cash, use_container_width=True)
-            except: st.error("Lỗi đọc sổ quỹ")
+                st.write("### 💵 TÌNH HÌNH TÀI CHÍNH")
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Tổng Thu", format_currency(total_thu), delta="VNĐ")
+                m2.metric("Tổng Chi", format_currency(total_chi), delta="-VNĐ", delta_color="inverse")
+                m3.metric("TỒN QUỸ", format_currency(ton_quy), delta="Thực tế")
+                st.divider()
+
+            with st.form("add_expense"):
+                st.write("**Nhập chi phí phát sinh:**")
+                c1, c2, c3 = st.columns(3)
+                d = c1.date_input("Ngày")
+                a = c2.number_input("Số tiền chi", 0, step=10000)
+                desc = c3.text_input("Nội dung chi")
+                if st.form_submit_button("Lưu Chi Phí"):
+                    save_cash_log(d, "Chi", a, desc)
+                    st.success("Đã lưu chi phí!")
+                    st.rerun()
+            
+            if not df_cash.empty:
+                st.write("**Lịch sử giao dịch:**")
+                df_display = df_cash.copy()
+                df_display['amount'] = df_display['amount'].apply(format_currency)
+                st.dataframe(df_display, use_container_width=True)
 
         with tab2:
             all_orders = fetch_all_orders()
             if all_orders:
-                # Prepare data
                 data = []
                 for o in all_orders:
                     data.append({
-                        "Status": o['status'],
-                        "Staff": o['financial'].get('staff', 'Unknown'),
-                        "Revenue": o['financial'].get('total', 0)
+                        "Status": o.get('status'),
+                        "Staff": o.get('financial', {}).get('staff', 'Unknown'),
+                        "Revenue": o.get('financial', {}).get('total', 0)
                     })
                 df = pd.DataFrame(data)
-                
                 c1, c2 = st.columns(2)
                 with c1:
                     st.write("Đơn hàng theo trạng thái")
-                    st.bar_chart(df['Status'].value_counts())
+                    if not df.empty:
+                        st.bar_chart(df['Status'].value_counts())
                 with c2:
                     st.write("Doanh số theo nhân viên")
-                    staff_rev = df.groupby("Staff")["Revenue"].sum()
-                    st.bar_chart(staff_rev)
+                    if not df.empty:
+                        staff_rev = df.groupby("Staff")["Revenue"].sum()
+                        st.bar_chart(staff_rev)
 
 if __name__ == "__main__":
     main()
