@@ -47,6 +47,57 @@ def get_gspread_client():
         return gspread.authorize(creds)
     except: return None
 
+# --- USER MANAGEMENT (MỚI) ---
+def init_users():
+    """Khởi tạo sheet Users nếu chưa có"""
+    client = get_gspread_client()
+    if not client: return
+    try:
+        sh = client.open_by_url(SHEET_URL)
+        try:
+            ws = sh.worksheet("Users")
+        except:
+            ws = sh.add_worksheet("Users", 100, 3)
+            ws.append_row(["username", "password", "role"])
+            # Tạo user mặc định
+            default_users = [
+                ["Nam", "Emyeu0901", "admin"],
+                ["Duong", "Duong-", "staff"],
+                ["Van", "Van", "staff"]
+            ]
+            for u in default_users:
+                ws.append_row(u)
+    except: pass
+
+def get_users_db():
+    client = get_gspread_client()
+    if not client: return []
+    try:
+        sh = client.open_by_url(SHEET_URL)
+        ws = sh.worksheet("Users")
+        return ws.get_all_records()
+    except: return []
+
+def change_password(username, new_pass):
+    client = get_gspread_client()
+    if not client: return False
+    try:
+        sh = client.open_by_url(SHEET_URL)
+        ws = sh.worksheet("Users")
+        cell = ws.find(username)
+        if cell:
+            ws.update_cell(cell.row, 2, new_pass) # Cột 2 là password
+            return True
+        return False
+    except: return False
+
+def check_login(username, password):
+    users = get_users_db()
+    for u in users:
+        if str(u['username']).strip() == username and str(u['password']).strip() == password:
+            return u
+    return None
+
 # --- DATABASE CORE ---
 def fetch_all_orders():
     client = get_gspread_client()
@@ -173,9 +224,6 @@ def add_new_order(order_data):
     except: return False
 
 def save_cash_log(date, type_, amount, method, note):
-    """
-    Cấu trúc: Date | Content | Amount | TM/CK | Note
-    """
     client = get_gspread_client()
     if not client: return
     try:
@@ -185,7 +233,6 @@ def save_cash_log(date, type_, amount, method, note):
             ws = sh.add_worksheet("Cashbook", 1000, 10)
             ws.append_row(["Date", "Content", "Amount", "TM/CK", "Note"])
         
-        # Nếu sheet tồn tại nhưng rỗng, thêm header
         if not ws.get_all_values():
              ws.append_row(["Date", "Content", "Amount", "TM/CK", "Note"])
 
@@ -232,7 +279,7 @@ def create_pdf(order, title):
         text = str(text)
         return remove_accents(text) if SAFE_MODE else text
 
-    # --- 1. HEADER ---
+    # --- HEADER ---
     if os.path.exists(HEADER_IMAGE):
         try:
             pdf.image(HEADER_IMAGE, x=10, y=10, w=190)
@@ -248,7 +295,7 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt('Số tài khoản: 451557254 – Ngân hàng TMCP Việt Nam Thịnh Vượng - CN Đồng Nai'), 0, 1, 'C')
         pdf.ln(2)
 
-    # --- 2. TITLE ---
+    # --- TITLE ---
     pdf.set_font_size(16)
     pdf.cell(0, 8, txt(title), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.set_font_size(11)
@@ -268,7 +315,7 @@ def create_pdf(order, title):
     cust = order.get('customer', {})
     items = order.get('items', [])
     
-    # --- 3. CUSTOMER INFO ---
+    # --- CUSTOMER INFO ---
     pdf.cell(0, 6, txt(f"Mã số: {oid} | Ngày: {odate}"), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.ln(1)
     pdf.cell(0, 6, txt(f"Khách hàng: {cust.get('name', '')}"), new_x="LMARGIN", new_y="NEXT")
@@ -279,7 +326,7 @@ def create_pdf(order, title):
     pdf.multi_cell(0, 5, txt(intro_text))
     pdf.ln(2)
     
-    # --- 4. TABLE ---
+    # --- TABLE ---
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(10, 8, "STT", 1, 0, 'C', 1)
     pdf.cell(75, 8, txt("Tên hàng / Quy cách"), 1, 0, 'C', 1)
@@ -332,7 +379,7 @@ def create_pdf(order, title):
     pdf.multi_cell(0, 6, txt(f"Bằng chữ: {money_text}"))
     pdf.ln(3)
 
-    # --- 5. SIGNATURE ---
+    # --- SIGNATURE ---
     pdf.set_x(10)
     if is_delivery:
         pdf.cell(95, 5, txt("NGƯỜI NHẬN"), 0, 0, 'C')
@@ -342,7 +389,7 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt("NGƯỜI BÁO GIÁ"), 0, 1, 'R')
         pdf.ln(20)
 
-    # --- 6. FOOTER ---
+    # --- FOOTER ---
     pdf.ln(2)
     pdf.set_font_size(10)
     pdf.set_x(10)
@@ -367,9 +414,47 @@ def create_pdf(order, title):
     
     return bytes(pdf.output())
 
-# --- MAIN APP ---
-def main():
-    st.set_page_config(page_title="Hệ Thống In Ấn", layout="wide")
+# --- UI CHÍNH VÀ LOGIN ---
+def login_page():
+    st.title("🔐 Đăng Nhập Hệ Thống")
+    
+    # Khởi tạo DB nếu lần đầu chạy
+    init_users()
+    
+    with st.form("login_form"):
+        username = st.text_input("Tên đăng nhập")
+        password = st.text_input("Mật khẩu", type="password")
+        if st.form_submit_button("Đăng nhập", type="primary"):
+            user = check_login(username, password)
+            if user:
+                st.session_state.logged_in = True
+                st.session_state.user = user
+                st.session_state.role = user['role']
+                st.success(f"Xin chào {username}!")
+                time.sleep(0.5)
+                st.rerun()
+            else:
+                st.error("Sai tên đăng nhập hoặc mật khẩu!")
+
+def main_app():
+    # Sidebar User Info & Logout
+    with st.sidebar:
+        st.write(f"👤 **{st.session_state.user['username']}** ({st.session_state.role})")
+        if st.button("Đăng xuất"):
+            st.session_state.logged_in = False
+            st.rerun()
+        
+        with st.expander("🔑 Đổi mật khẩu"):
+            new_p1 = st.text_input("Mật khẩu mới", type="password")
+            new_p2 = st.text_input("Nhập lại", type="password")
+            if st.button("Lưu mật khẩu"):
+                if new_p1 and new_p1 == new_p2:
+                    if change_password(st.session_state.user['username'], new_p1):
+                        st.success("Đổi thành công!")
+                    else: st.error("Lỗi hệ thống")
+                else: st.error("Mật khẩu không khớp")
+
+    st.title("Hệ Thống In Ấn An Lộc Phát")
     
     if "service_account" not in st.secrets:
         st.error("Lỗi: Chưa cấu hình st.secrets")
@@ -380,15 +465,23 @@ def main():
     if 'cart' not in st.session_state: st.session_state.cart = []
     if 'last_order' not in st.session_state: st.session_state.last_order = None
 
-    # --- TAB 1: TẠO BÁO GIÁ ---
+    # --- TAB 1: TẠO BÁO GIÁ (AI CŨNG ĐƯỢC DÙNG) ---
     if menu == "1. Tạo Báo Giá":
-        st.title("📝 Tạo Báo Giá Mới")
+        st.header("📝 Tạo Báo Giá Mới")
         
         c1, c2 = st.columns(2)
         name = c1.text_input("Tên Khách Hàng", key="in_name")
         phone = c2.text_input("Số Điện Thoại", key="in_phone")
         addr = st.text_input("Địa Chỉ", key="in_addr")
-        staff = st.selectbox("Nhân Viên Kinh Doanh", ["Nam", "Dương", "Vạn", "Khác"], key="in_staff")
+        
+        # Tự động chọn nhân viên theo user đăng nhập nếu trùng tên
+        user_name = st.session_state.user['username']
+        staff_options = ["Nam", "Dương", "Vạn", "Khác"]
+        default_idx = 0
+        if user_name in staff_options:
+            default_idx = staff_options.index(user_name)
+            
+        staff = st.selectbox("Nhân Viên Kinh Doanh", staff_options, index=default_idx, key="in_staff")
 
         st.divider()
         st.subheader("2. Chi tiết hàng hóa & Giá")
@@ -474,10 +567,12 @@ def main():
 
     # --- TAB 2: QUẢN LÝ ---
     elif menu == "2. Quản Lý Đơn Hàng (Pipeline)":
-        st.title("🏭 Quy Trình Sản Xuất")
+        st.header("🏭 Quy Trình Sản Xuất")
         all_orders = fetch_all_orders()
         tabs = st.tabs(["1️⃣ Báo Giá", "2️⃣ Thiết Kế", "3️⃣ Sản Xuất", "4️⃣ Giao Hàng", "5️⃣ Công Nợ", "✅ Hoàn Thành"])
         
+        is_admin = st.session_state.role == 'admin'
+
         def render_tab_content(status_filter, next_status, btn_text, pdf_type=None):
             current_orders = [o for o in all_orders if o.get('status') == status_filter]
             if not current_orders:
@@ -538,14 +633,17 @@ def main():
                     st.write(f"Tổng đơn: **{format_currency(total)}**")
                     st.write(f"Đã thanh toán: {format_currency(paid)}")
                     st.error(f"CÒN NỢ: **{format_currency(debt)}**")
-                    with st.expander("👁️ Admin View"):
-                        st.write(f"Lợi nhuận: {format_currency(profit_val)}")
-                        st.write(f"Hoa hồng ({fin.get('staff')}): {format_currency(comm_val)}")
-                        st.write(f"TT Hoa hồng: {comm_stat}")
-                        if comm_stat != "Đã chi":
-                            if st.button("Chi Hoa Hồng Ngay", key=f"comm_{oid}"):
-                                update_commission_status(oid, "Đã chi")
-                                st.rerun()
+                    
+                    # CHỈ ADMIN MỚI THẤY CHI TIẾT LỢI NHUẬN VÀ NÚT CHI HOA HỒNG
+                    if is_admin:
+                        with st.expander("👁️ Admin View", expanded=True):
+                            st.write(f"Lợi nhuận: {format_currency(profit_val)}")
+                            st.write(f"Hoa hồng ({fin.get('staff')}): {format_currency(comm_val)}")
+                            st.write(f"TT Hoa hồng: {comm_stat}")
+                            if comm_stat != "Đã chi":
+                                if st.button("Chi Hoa Hồng Ngay", key=f"comm_{oid}"):
+                                    update_commission_status(oid, "Đã chi")
+                                    st.rerun()
 
                 st.write("---")
                 c_act1, c_act2, c_act3, c_act4 = st.columns(4)
@@ -556,97 +654,95 @@ def main():
                 with c_act2:
                     pdf_gh = create_pdf(selected_order_data, "PHIẾU GIAO HÀNG, KIÊM PHIẾU THU")
                     st.download_button("🚚 In Phiếu Giao", pdf_gh, f"GH_{oid}.pdf", "application/pdf", key=f"dl_gh_{oid}", use_container_width=True)
-                with c_act3:
-                    if next_status:
-                        if st.button(f"{btn_text} ➡️", key=f"mv_{oid}", type="primary", use_container_width=True):
-                            update_order_status(oid, next_status)
-                            st.rerun()
-                with c_act4:
-                    if st.button("🗑️ Xóa Đơn", key=f"del_{oid}", use_container_width=True):
-                        if delete_order(oid):
-                            st.success("Đã xóa!")
-                            time.sleep(1)
-                            st.rerun()
-
-                st.write("---")
-                st.write("💳 **THANH TOÁN & CẬP NHẬT**")
-                tab_pay, tab_edit = st.tabs(["💸 Thu Tiền", "✏️ Sửa Đơn Hàng"])
                 
-                with tab_pay:
-                    c_p1, c_p2 = st.columns(2)
-                    pay_method = c_p1.radio("Hình thức:", ["Một phần", "Toàn bộ"], horizontal=True, key=f"pm_{oid}")
-                    if pay_method == "Toàn bộ": pay_val = float(debt)
-                    else: pay_val = c_p2.number_input("Nhập số tiền thu:", 0.0, float(debt), float(debt), key=f"p_val_{oid}")
-                    
-                    # --- THÊM LỰA CHỌN HÌNH THỨC THANH TOÁN ---
-                    pay_via = c_p2.selectbox("Hình thức thanh toán:", ["TM", "CK"], key=f"via_{oid}")
-                    
-                    st.write(f"👉 Xác nhận thu: **{format_currency(pay_val)}** ({pay_via})")
-                    
-                    if st.button("Xác nhận Thu Tiền", key=f"cf_pay_{oid}"):
-                        if pay_val > 0:
-                            new_st = status_filter
-                            pay_stat_new = "Đã TT" if (debt - pay_val) <= 0 else "Cọc/Còn nợ"
-                            if (debt - pay_val) <= 0 and status_filter == "Công nợ": new_st = "Hoàn thành" 
-                            
-                            update_order_status(oid, new_st, pay_stat_new, pay_val)
-                            # Lưu đúng loại hình thức (TM/CK)
-                            save_cash_log(datetime.now().strftime("%Y-%m-%d"), "Thu", pay_val, pay_via, f"Thu tiền đơn {oid}")
-                            
-                            st.success("Đã thu tiền thành công!")
-                            time.sleep(1)
-                            st.rerun()
-                        else: st.warning("Số tiền phải lớn hơn 0")
-
-                with tab_edit:
-                    with st.form(f"form_edit_{oid}"):
-                        ce1, ce2 = st.columns(2)
-                        new_name = ce1.text_input("Tên Khách", value=cust.get('name'))
-                        new_phone = ce2.text_input("SĐT", value=cust.get('phone'))
-                        new_addr = st.text_input("Địa chỉ", value=cust.get('address'))
-                        st.write("📋 **Sửa Hàng Hóa & Giá:**")
-                        df_edit = pd.DataFrame(items)
-                        edited_df = st.data_editor(
-                            df_edit, num_rows="dynamic",
-                            column_config={
-                                "name": "Tên hàng", "unit": "ĐVT", "qty": st.column_config.NumberColumn("SL"),
-                                "cost": st.column_config.NumberColumn("Giá Vốn"), "price": st.column_config.NumberColumn("Giá Bán"),
-                                "vat_rate": st.column_config.NumberColumn("% VAT"), "total_line": st.column_config.NumberColumn("Thành tiền", disabled=True)
-                            }, key=f"editor_{oid}"
-                        )
-                        if st.form_submit_button("Lưu Thay Đổi"):
-                            new_items_data = edited_df.to_dict('records')
-                            recalc_total = 0
-                            for it in new_items_data:
-                                q = float(it.get('qty', 0))
-                                p = float(it.get('price', 0))
-                                v = float(it.get('vat_rate', 0))
-                                c = float(it.get('cost', 0))
-                                line_total = q * p
-                                vat_amt = line_total * (v/100)
-                                it['vat_amt'] = vat_amt
-                                it['total_line'] = line_total + vat_amt
-                                it['profit'] = line_total - (q * c)
-                                recalc_total += it['total_line']
-                            new_cust_data = {"name": new_name, "phone": new_phone, "address": new_addr}
-                            if edit_order_info(oid, new_cust_data, recalc_total, new_items_data):
-                                st.success("Cập nhật thành công!")
+                # CÁC NÚT TÁC ĐỘNG (CHUYỂN TRẠNG THÁI, XÓA, THU TIỀN) CHỈ DÀNH CHO ADMIN
+                if is_admin:
+                    with c_act3:
+                        if next_status:
+                            if st.button(f"{btn_text} ➡️", key=f"mv_{oid}", type="primary", use_container_width=True):
+                                update_order_status(oid, next_status)
+                                st.rerun()
+                    with c_act4:
+                        if st.button("🗑️ Xóa Đơn", key=f"del_{oid}", use_container_width=True):
+                            if delete_order(oid):
+                                st.success("Đã xóa!")
                                 time.sleep(1)
                                 st.rerun()
+
+                    st.write("---")
+                    st.write("💳 **THANH TOÁN & CẬP NHẬT (Admin Only)**")
+                    tab_pay, tab_edit = st.tabs(["💸 Thu Tiền", "✏️ Sửa Đơn Hàng"])
+                    
+                    with tab_pay:
+                        c_p1, c_p2 = st.columns(2)
+                        pay_method = c_p1.radio("Hình thức:", ["Một phần", "Toàn bộ"], horizontal=True, key=f"pm_{oid}")
+                        if pay_method == "Toàn bộ": pay_val = float(debt)
+                        else: pay_val = c_p2.number_input("Nhập số tiền thu:", 0.0, float(debt), float(debt), key=f"p_val_{oid}")
+                        
+                        pay_via = c_p2.selectbox("Hình thức thanh toán:", ["TM", "CK"], key=f"via_{oid}")
+                        
+                        st.write(f"👉 Xác nhận thu: **{format_currency(pay_val)}** ({pay_via})")
+                        
+                        if st.button("Xác nhận Thu Tiền", key=f"cf_pay_{oid}"):
+                            if pay_val > 0:
+                                new_st = status_filter
+                                pay_stat_new = "Đã TT" if (debt - pay_val) <= 0 else "Cọc/Còn nợ"
+                                if (debt - pay_val) <= 0 and status_filter == "Công nợ": new_st = "Hoàn thành" 
+                                update_order_status(oid, new_st, pay_stat_new, pay_val)
+                                save_cash_log(datetime.now().strftime("%Y-%m-%d"), "Thu", pay_val, pay_via, f"Thu tiền đơn {oid}")
+                                st.success("Đã thu tiền thành công!")
+                                time.sleep(1)
+                                st.rerun()
+                            else: st.warning("Số tiền phải lớn hơn 0")
+
+                    with tab_edit:
+                        with st.form(f"form_edit_{oid}"):
+                            ce1, ce2 = st.columns(2)
+                            new_name = ce1.text_input("Tên Khách", value=cust.get('name'))
+                            new_phone = ce2.text_input("SĐT", value=cust.get('phone'))
+                            new_addr = st.text_input("Địa chỉ", value=cust.get('address'))
+                            st.write("📋 **Sửa Hàng Hóa & Giá:**")
+                            df_edit = pd.DataFrame(items)
+                            edited_df = st.data_editor(
+                                df_edit, num_rows="dynamic",
+                                column_config={
+                                    "name": "Tên hàng", "unit": "ĐVT", "qty": st.column_config.NumberColumn("SL"),
+                                    "cost": st.column_config.NumberColumn("Giá Vốn"), "price": st.column_config.NumberColumn("Giá Bán"),
+                                    "vat_rate": st.column_config.NumberColumn("% VAT"), "total_line": st.column_config.NumberColumn("Thành tiền", disabled=True)
+                                }, key=f"editor_{oid}"
+                            )
+                            if st.form_submit_button("Lưu Thay Đổi"):
+                                new_items_data = edited_df.to_dict('records')
+                                recalc_total = 0
+                                for it in new_items_data:
+                                    q = float(it.get('qty', 0))
+                                    p = float(it.get('price', 0))
+                                    v = float(it.get('vat_rate', 0))
+                                    c = float(it.get('cost', 0))
+                                    line_total = q * p
+                                    vat_amt = line_total * (v/100)
+                                    it['vat_amt'] = vat_amt
+                                    it['total_line'] = line_total + vat_amt
+                                    it['profit'] = line_total - (q * c)
+                                    recalc_total += it['total_line']
+                                new_cust_data = {"name": new_name, "phone": new_phone, "address": new_addr}
+                                if edit_order_info(oid, new_cust_data, recalc_total, new_items_data):
+                                    st.success("Cập nhật thành công!")
+                                    time.sleep(1)
+                                    st.rerun()
+                else:
+                    st.info("🔒 Bạn chỉ có quyền xem chi tiết đơn hàng.")
 
         with tabs[0]: render_tab_content("Báo giá", "Thiết kế", "✅ Duyệt -> Thiết Kế", "BÁO GIÁ")
         with tabs[1]: render_tab_content("Thiết kế", "Sản xuất", "✅ Duyệt TK -> Sản Xuất")
         with tabs[2]: render_tab_content("Sản xuất", "Giao hàng", "✅ Xong -> Giao Hàng")
         with tabs[3]: render_tab_content("Giao hàng", "Công nợ", "✅ Giao Xong -> Công Nợ", "PHIẾU GIAO HÀNG")
         with tabs[4]: render_tab_content("Công nợ", None, "")
+        with tabs[5]: render_tab_content("Hoàn thành", None, "")
 
-        with tabs[5]: # Hoàn thành
-            # SỬ DỤNG CHUNG GIAO DIỆN XỬ LÝ (Để có nút Chi Hoa Hồng)
-            render_tab_content("Hoàn thành", None, "")
-
-    # --- TAB 3: TÀI CHÍNH (SỔ QUỸ CHỈ TIỀN MẶT - TM) ---
+    # --- TAB 3: TÀI CHÍNH ---
     elif menu == "3. Sổ Quỹ & Báo Cáo":
-        st.title("📊 Sổ Quỹ Tiền Mặt")
+        st.header("📊 Sổ Quỹ Tiền Mặt")
         
         # Load dữ liệu
         df = pd.DataFrame(fetch_cashbook())
@@ -660,13 +756,11 @@ def main():
         for col in ["Date", "Content", "Amount", "TM/CK", "Note"]:
             if col not in df.columns: df[col] = "" 
             
-        # Chuẩn hóa cột TM/CK
-        # QUAN TRỌNG: Chỉ lọc các dòng mà TM/CK là "TM" (không phân biệt hoa thường)
+        df['TM/CK'] = df['TM/CK'].replace("", "TM").fillna("TM")
         df['TM/CK_Norm'] = df['TM/CK'].astype(str).str.strip().str.upper()
         df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
 
-        # --- LỌC DỮ LIỆU ---
-        # Chỉ lấy dòng có TM/CK là "TM"
+        # LỌC DATA TM
         df_tm = df[df['TM/CK_Norm'] == 'TM'].copy()
 
         if not df_tm.empty:
@@ -691,36 +785,43 @@ def main():
         else:
             st.info("Chưa có giao dịch Tiền mặt nào.")
             c1, c2, c3 = st.columns(3)
-            c1.metric("Tổng Thu (TM)", "0")
-            c2.metric("Tổng Chi (TM)", "0")
-            c3.metric("Tồn Quỹ Tiền Mặt", "0")
+            c1.metric("Tổng Thu (TM)", "0"); c2.metric("Tổng Chi (TM)", "0"); c3.metric("Tồn Quỹ Tiền Mặt", "0")
 
-        st.write("---")
-        st.subheader("📝 Ghi Sổ Tiền Mặt")
-        with st.form("cash_entry"):
-            c1, c2 = st.columns(2)
-            type_option = c1.radio("Loại", ["Thu", "Chi"], horizontal=True)
-            st.caption("Hình thức: Tiền Mặt (TM)")
-            
-            d = c2.date_input("Ngày", value=datetime.now())
-            
-            c3, c4 = st.columns(2)
-            amount = c3.number_input("Số tiền", 0, step=10000)
-            note = c4.text_input("Nội dung / Ghi chú")
-            
-            if st.form_submit_button("💾 Lưu Sổ Quỹ"):
-                if amount > 0:
-                    # Mặc định lưu là TM khi nhập từ tab này
-                    save_cash_log(d, type_option, amount, "TM", note)
-                    st.success("Đã lưu vào sổ quỹ tiền mặt!")
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    st.warning("Vui lòng nhập số tiền > 0")
+        # CHỈ ADMIN MỚI ĐƯỢC GHI SỔ THỦ CÔNG
+        if is_admin:
+            st.write("---")
+            st.subheader("📝 Ghi Sổ Tiền Mặt")
+            with st.form("cash_entry"):
+                c1, c2 = st.columns(2)
+                type_option = c1.radio("Loại", ["Thu", "Chi"], horizontal=True)
+                st.caption("Hình thức: Tiền Mặt (TM)")
+                d = c2.date_input("Ngày", value=datetime.now())
+                c3, c4 = st.columns(2)
+                amount = c3.number_input("Số tiền", 0, step=10000)
+                note = c4.text_input("Nội dung / Ghi chú")
+                
+                if st.form_submit_button("💾 Lưu Sổ Quỹ"):
+                    if amount > 0:
+                        save_cash_log(d, type_option, amount, "TM", note)
+                        st.success("Đã lưu vào sổ quỹ tiền mặt!")
+                        time.sleep(1)
+                        st.rerun()
+                    else: st.warning("Vui lòng nhập số tiền > 0")
+        else:
+            st.warning("🔒 Chỉ Admin được phép ghi sổ thủ công.")
 
+# --- CHECK LOGIN ĐẦU TIÊN ---
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        st.error("⚠️ Đã xảy ra lỗi ứng dụng:")
-        st.code(traceback.format_exc())
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
+        st.session_state.user = {}
+        st.session_state.role = ""
+
+    if not st.session_state.logged_in:
+        login_page()
+    else:
+        try:
+            main_app()
+        except Exception as e:
+            st.error("⚠️ Đã xảy ra lỗi ứng dụng:")
+            st.code(traceback.format_exc())
