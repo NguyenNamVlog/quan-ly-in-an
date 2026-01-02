@@ -13,8 +13,8 @@ from streamlit_gsheets import GSheetsConnection
 TEMPLATE_CONTRACT = 'Hop dong .docx' 
 FONT_PATH = 'Arial.ttf'
 
-# !!! QUAN TRỌNG: DÁN LINK GOOGLE SHEET CỦA BẠN VÀO GIỮA 2 DẤU NGOẶC KÉP DƯỚI ĐÂY !!!
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit" 
+# !!! QUAN TRỌNG: DÁN LINK GOOGLE SHEET CỦA BẠN VÀO DƯỚI ĐÂY !!!
+SHEET_URL = "https://docs.google.com/spreadsheets/d/XXXXXXXXXXXXXXXXXXXX/edit" 
 
 # --- HÀM TIỆN ÍCH ---
 def format_currency(value):
@@ -31,33 +31,31 @@ def read_money(amount):
     except:
         return "..................... đồng."
 
-# --- QUẢN LÝ DATABASE (GOOGLE SHEETS - AUTO FIX LỖI JWT) ---
+# --- QUẢN LÝ DATABASE (FIX LỖI JWT MẠNH MẼ) ---
 def get_db_connection():
     """
-    Hàm này tự động sửa lỗi Private Key bị sai định dạng \n
-    Giúp kết nối thành công kể cả khi copy key chưa chuẩn.
+    Hàm kết nối thông minh: Tự động sửa lỗi private_key trong secrets
+    bất kể người dùng copy/paste kiểu gì.
     """
     try:
-        # 1. Lấy thông tin từ secrets
-        raw_secrets = st.secrets["connections"]["gsheets"]
+        # 1. Lấy cấu hình từ secrets ra dưới dạng Dictionary
+        # st.secrets trả về object đặc biệt, cần ép kiểu về dict để sửa
+        secrets_conf = dict(st.secrets["connections"]["gsheets"])
         
-        # Chuyển sang dict để có thể chỉnh sửa
-        secrets_dict = dict(raw_secrets)
+        # 2. Xử lý sửa lỗi Private Key
+        if "private_key" in secrets_conf:
+            pk = secrets_conf["private_key"]
+            # Thay thế ký tự \n (do copy từ JSON) thành xuống dòng thật
+            pk_fixed = pk.replace("\\n", "\n") 
+            secrets_conf["private_key"] = pk_fixed
 
-        # 2. Tự động sửa lỗi xuống dòng trong Private Key
-        if "private_key" in secrets_dict:
-            key = secrets_dict["private_key"]
-            # Nếu key chứa ký tự \n (hai ký tự riêng biệt), thay bằng xuống dòng thật
-            if "\\n" in key:
-                secrets_dict["private_key"] = key.replace("\\n", "\n")
-        
-        # 3. Tạo kết nối với thông tin đã sửa
-        # Truyền trực tiếp các tham số đã sửa vào hàm kết nối
-        conn = st.connection("gsheets", type=GSheetsConnection, **secrets_dict)
+        # 3. Khởi tạo kết nối với cấu hình đã sửa
+        # Dùng **secrets_conf để truyền toàn bộ thông tin đã fix vào
+        conn = st.connection("gsheets", type=GSheetsConnection, **secrets_conf)
         return conn
 
     except Exception as e:
-        # Nếu lỗi quá nặng thì dùng cách mặc định
+        # Nếu vẫn lỗi, thử kết nối mặc định (hy vọng secrets đúng)
         return st.connection("gsheets", type=GSheetsConnection)
 
 def load_db():
@@ -79,6 +77,7 @@ def load_db():
             data.append(item)
         return data
     except Exception as e:
+        # st.error(f"Lỗi load DB: {e}") 
         return []
 
 def save_db(data):
