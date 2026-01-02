@@ -15,9 +15,14 @@ FONT_PATH = 'Arial.ttf'
 # [1] DÁN LINK GOOGLE SHEET CỦA BẠN VÀO DƯỚI ĐÂY:
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit" 
 
-# [2] CHÌA KHÓA BẢO MẬT (Đã được định dạng lại chuẩn từng dòng để KHÔNG BAO GIỜ LỖI)
-# Tôi đã tách thủ công các dòng mã hóa ra để Python đọc chính xác tuyệt đối.
-PRIVATE_KEY_CLEAN = """-----BEGIN PRIVATE KEY-----
+# [2] THÔNG TIN ĐĂNG NHẬP (ĐÃ ĐƯỢC CHUẨN HÓA THỦ CÔNG)
+# Key dưới đây đã được định dạng chính xác từ file JSON bạn gửi.
+# Không cần sửa đổi gì ở khu vực này nữa.
+CREDENTIALS_DICT = {
+    "type": "service_account",
+    "project_id": "quanlyinan",
+    "private_key_id": "becc31a465356195dbb8352429f10ec4a76a3dad",
+    "private_key": """-----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCRixepQSVgPNAl
 kGDUK4pLknV2ayZBPj2hSir4SE2Q0rm1D1fOBJAejCMvV23Crz3H+w9w7+ST08ci
 VQuVpm6Ous4fvZNtU9bzvh4soHWDUib7UqBIhgGs8Zjocs0tf555JxueTEp5Gppv
@@ -44,19 +49,14 @@ VlcJNUsRR32y2iZdgX37S0EEAREYR9GUqtWWQxEgTQKBgECULpGVDkRGSGLrCPPG
 ep0iMdgunHhHc4Vdk01Nq0y/JGhCYAw1R910nm7jXnJM8C06U7srXWB45ohOC4w7
 hq1C9FMmWriEKSQyoQw1C4H9UePjezwn+MTHIRbQYlUMJQqIjQGMRfr4i+o8v8je
 cZ6vlyaYkVlaKQuZY25/HJA4
------END PRIVATE KEY-----"""
-
-CREDENTIALS_DICT = {
-    "type": "service_account",
-    "project_id": "quanlyinan",
-    "private_key_id": "becc31a465356195dbb8352429f10ec4a76a3dad",
-    "private_key": PRIVATE_KEY_CLEAN, # Sử dụng key đã làm sạch ở trên
+-----END PRIVATE KEY-----""",
     "client_email": "quanlyinan@quanlyinan.iam.gserviceaccount.com",
     "client_id": "105384981732403020965",
     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
     "token_uri": "https://oauth2.googleapis.com/token",
     "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
     "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/quanlyinan%40quanlyinan.iam.gserviceaccount.com",
+    "universe_domain": "googleapis.com"
 }
 
 # --- HÀM TIỆN ÍCH ---
@@ -74,8 +74,8 @@ def read_money(amount):
     except:
         return "..................... đồng."
 
-# --- KẾT NỐI GOOGLE SHEETS (DÙNG GSPREAD + KEY SẠCH) ---
-@st.cache_resource
+# --- KẾT NỐI GOOGLE SHEETS (DÙNG GSPREAD CHUẨN) ---
+# Đã tắt cache tạm thời để đảm bảo load lại credentials mới nhất
 def get_gspread_client():
     try:
         scope = [
@@ -83,7 +83,7 @@ def get_gspread_client():
             "https://www.googleapis.com/auth/drive"
         ]
         
-        # Kết nối trực tiếp từ Dict đã chuẩn bị sẵn
+        # Kết nối trực tiếp từ Dict chuẩn đã khai báo ở trên
         creds = Credentials.from_service_account_info(CREDENTIALS_DICT, scopes=scope)
         client = gspread.authorize(creds)
         return client
@@ -95,14 +95,17 @@ def load_db():
     client = get_gspread_client()
     if not client: return []
     try:
+        # Mở file bằng URL
         sh = client.open_by_url(SHEET_URL)
         worksheet = sh.worksheet("Orders")
+        
+        # Lấy tất cả dữ liệu
         all_records = worksheet.get_all_records()
         
+        # Parse JSON cho các cột dữ liệu phức tạp
         data = []
         for item in all_records:
             try:
-                # Parse JSON string trong các cột nếu có
                 if isinstance(item.get('customer'), str) and item['customer']:
                     item['customer'] = json.loads(item['customer'])
                 if isinstance(item.get('items'), str) and item['items']:
@@ -114,11 +117,13 @@ def load_db():
                 continue
         return data
     except gspread.WorksheetNotFound:
+        # Nếu chưa có sheet Orders, trả về list rỗng
         return []
     except Exception as e:
+        # Bắt lỗi 403 (Chưa chia sẻ quyền)
         if "403" in str(e):
-            st.error(f"⚠️ LỖI QUYỀN TRUY CẬP: Bạn chưa chia sẻ file cho Robot.")
-            st.warning(f"Vui lòng chia sẻ quyền Editor cho email: {CREDENTIALS_DICT['client_email']}")
+            st.error("⚠️ LỖI QUYỀN TRUY CẬP: Bạn chưa chia sẻ file Google Sheet.")
+            st.info(f"Vui lòng vào Google Sheet, bấm nút 'Chia sẻ' và thêm email này làm Editor:\n\n**{CREDENTIALS_DICT['client_email']}**")
         else:
             st.error(f"Lỗi tải dữ liệu: {e}")
         return []
@@ -146,9 +151,13 @@ def save_db(data):
             data_to_save.append(clean_item)
         
         df = pd.DataFrame(data_to_save)
+        
         worksheet.clear()
         if not df.empty:
+            # Ghi cả tiêu đề cột và dữ liệu
             worksheet.update([df.columns.values.tolist()] + df.values.tolist())
+        
+        # Xóa cache để lần sau load lại dữ liệu mới nhất
         st.cache_data.clear()
         
     except Exception as e:
@@ -161,7 +170,8 @@ def load_cash():
         sh = client.open_by_url(SHEET_URL)
         worksheet = sh.worksheet("Cashbook")
         data = worksheet.get_all_records()
-        if not data: return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
+        if not data:
+            return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
         return pd.DataFrame(data)
     except:
         return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
@@ -178,7 +188,7 @@ def save_cash(df):
         
         worksheet.clear()
         if not df.empty:
-            # Convert date to string to enable JSON serialization
+            # Chuyển đổi ngày tháng sang chuỗi để tránh lỗi JSON
             df_save = df.copy()
             df_save['Ngày'] = df_save['Ngày'].astype(str)
             worksheet.update([df_save.columns.values.tolist()] + df_save.values.tolist())
