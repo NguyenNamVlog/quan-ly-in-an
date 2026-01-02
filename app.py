@@ -626,4 +626,90 @@ def main():
                                 time.sleep(1)
                                 st.rerun()
 
-        with tabs[0]: render_tab_content("Báo giá", "Thiết kế", "✅ Duyệt -> Thiết
+        with tabs[0]: render_tab_content("Báo giá", "Thiết kế", "✅ Duyệt -> Thiết Kế", "BÁO GIÁ")
+        with tabs[1]: render_tab_content("Thiết kế", "Sản xuất", "✅ Duyệt TK -> Sản Xuất")
+        with tabs[2]: render_tab_content("Sản xuất", "Giao hàng", "✅ Xong -> Giao Hàng")
+        with tabs[3]: render_tab_content("Giao hàng", "Công nợ", "✅ Giao Xong -> Công Nợ", "PHIẾU GIAO HÀNG")
+        with tabs[4]: render_tab_content("Công nợ", None, "")
+
+        with tabs[5]: # Hoàn thành
+            orders = [o for o in all_orders if o.get('status') == 'Hoàn thành']
+            if orders:
+                data = []
+                for o in orders:
+                    data.append({
+                        "Mã": o['order_id'], "Khách": o['customer']['name'],
+                        "Tổng tiền": format_currency(o['financial']['total']),
+                        "Trạng thái": o.get('payment_status'),
+                        "Hoa hồng": o['financial'].get('commission_status')
+                    })
+                st.dataframe(pd.DataFrame(data), use_container_width=True)
+
+    # --- TAB 3: TÀI CHÍNH (SỔ QUỸ CẬP NHẬT) ---
+    elif menu == "3. Sổ Quỹ & Báo Cáo":
+        st.title("📊 Tài Chính")
+        tab1, tab2 = st.tabs(["Sổ Quỹ", "Báo Cáo"])
+        with tab1:
+            df = pd.DataFrame(fetch_cashbook())
+            # Xử lý data để hiển thị đẹp
+            if not df.empty and 'amount' in df.columns and 'type' in df.columns:
+                df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
+                df['Thu'] = df.apply(lambda x: x['amount'] if x['type'] == 'Thu' else 0, axis=1)
+                df['Chi'] = df.apply(lambda x: x['amount'] if x['type'] == 'Chi' else 0, axis=1)
+                
+                total_thu = df['Thu'].sum()
+                total_chi = df['Chi'].sum()
+                
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Tổng Thu", format_currency(total_thu))
+                c2.metric("Tổng Chi", format_currency(total_chi))
+                c3.metric("Tồn Quỹ", format_currency(total_thu - total_chi))
+                st.divider()
+                
+                df['Thu'] = df['Thu'].apply(lambda x: format_currency(x) if x > 0 else "")
+                df['Chi'] = df['Chi'].apply(lambda x: format_currency(x) if x > 0 else "")
+                
+                if 'note' not in df.columns: df['note'] = ""
+                df_display = df[['date', 'Thu', 'Chi', 'desc', 'note']]
+                df_display.columns = ["Ngày tháng", "Thu", "Chi", "Nội dung", "Ghi chú"]
+                
+                st.dataframe(df_display, use_container_width=True, hide_index=True)
+            else:
+                st.info("Sổ quỹ trống hoặc chưa đúng định dạng.")
+                st.divider()
+
+            st.subheader("📝 Ghi Sổ Thu/Chi")
+            with st.form("cash_entry"):
+                c1, c2 = st.columns(2)
+                type_option = c1.radio("Loại", ["Thu", "Chi"], horizontal=True)
+                d = c2.date_input("Ngày", value=datetime.now())
+                
+                c3, c4 = st.columns(2)
+                amount = c3.number_input("Số tiền", 0, step=10000)
+                desc = c4.text_input("Nội dung (Lý do)")
+                
+                note = st.text_input("Ghi chú thêm")
+                
+                if st.form_submit_button("💾 Lưu Sổ Quỹ"):
+                    if amount > 0:
+                        save_cash_log(d, type_option, amount, desc, note)
+                        st.success("Đã lưu!")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.warning("Vui lòng nhập số tiền > 0")
+            
+        with tab2:
+            orders = fetch_all_orders()
+            if orders:
+                df = pd.DataFrame([{"Status": o.get('status'), "Staff": o.get('financial', {}).get('staff'), "Total": o.get('financial', {}).get('total', 0)} for o in orders])
+                if not df.empty:
+                    st.bar_chart(df['Status'].value_counts())
+                    st.bar_chart(df.groupby("Staff")['Total'].sum())
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        st.error("⚠️ Đã xảy ra lỗi ứng dụng:")
+        st.code(traceback.format_exc())
