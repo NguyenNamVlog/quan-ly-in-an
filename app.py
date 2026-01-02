@@ -14,6 +14,7 @@ from google.oauth2.service_account import Credentials
 # --- CẤU HÌNH ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit"
 FONT_FILENAME = 'arial.ttf' 
+HEADER_IMAGE = 'tieu_de.png' # Tên file hình tiêu đề
 
 # --- HÀM HỖ TRỢ ---
 def remove_accents(input_str):
@@ -222,23 +223,54 @@ def create_pdf(order, title):
         text = str(text)
         return remove_accents(text) if SAFE_MODE else text
 
-    pdf.set_font_size(14)
-    pdf.cell(0, 10, txt('CÔNG TY IN ẤN AN LỘC PHÁT'), new_x="LMARGIN", new_y="NEXT", align='C')
-    pdf.ln(5)
+    # --- 1. CHÈN HÌNH TIÊU ĐỀ (NẾU CÓ) ---
+    if os.path.exists(HEADER_IMAGE):
+        try:
+            # Chèn hình: x=10, y=10, rộng=190mm (A4 210-20)
+            pdf.image(HEADER_IMAGE, x=10, y=10, w=190)
+            # Dịch chuyển con trỏ xuống dưới hình (ước lượng chiều cao hình + khoảng cách)
+            # Bạn có thể điều chỉnh số 40 này tùy theo chiều cao thực tế của ảnh
+            pdf.set_y(pdf.get_y() + 40) 
+        except: 
+            # Nếu lỗi chèn hình thì bỏ qua
+            pass
+    else:
+        # Nếu không có hình thì in tên công ty bằng text như cũ
+        pdf.set_font_size(14)
+        pdf.cell(0, 10, txt('CÔNG TY IN ẤN AN LỘC PHÁT'), new_x="LMARGIN", new_y="NEXT", align='C')
+        pdf.ln(5)
+
+    # --- 2. TIÊU ĐỀ PHIẾU ---
     pdf.set_font_size(16)
+    # Nếu có file hình in đậm rồi thì tiêu đề text cũng nên in đậm (giả lập bằng cách vẽ lại nếu ko có font bold)
+    pdf.set_font(style='B')
     pdf.cell(0, 10, txt(title), new_x="LMARGIN", new_y="NEXT", align='C')
+    pdf.set_font(style='') # Reset style
     pdf.set_font_size(11)
     
+    # --- 3. XỬ LÝ NGÀY THÁNG ---
     oid = order.get('order_id', '')
-    odate = order.get('date', '')
+    
+    # Nếu là Phiếu Giao Hàng -> Lấy ngày hiện tại (ngày in)
+    if "GIAO HÀNG" in title.upper():
+        odate = datetime.now().strftime("%d/%m/%Y")
+    else:
+        # Báo giá: Lấy ngày tạo đơn
+        raw_date = order.get('date', '')
+        try:
+            # Format lại ngày từ YYYY-MM-DD sang DD/MM/YYYY cho đẹp
+            odate = datetime.strptime(raw_date, "%Y-%m-%d").strftime("%d/%m/%Y")
+        except:
+            odate = raw_date
+
     cust = order.get('customer', {})
     items = order.get('items', [])
     fin = order.get('financial', {})
     
-    pdf.cell(0, 8, txt(f"Mã: {oid} | Ngày: {odate}"), new_x="LMARGIN", new_y="NEXT", align='C')
+    pdf.cell(0, 8, txt(f"Mã số: {oid} | Ngày: {odate}"), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.ln(5)
     pdf.cell(0, 7, txt(f"Khách hàng: {cust.get('name', '')}"), new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 7, txt(f"SĐT: {cust.get('phone', '')}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, txt(f"Điện thoại: {cust.get('phone', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 7, txt(f"Địa chỉ: {cust.get('address', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(5)
     
@@ -285,9 +317,10 @@ def create_pdf(order, title):
     pdf.cell(40, 8, format_currency(total_vat), 1, 1, 'R')
     pdf.ln(8)
     
-    # --- ĐÃ XÓA LỆNH IN ĐẬM ĐỂ TRÁNH LỖI CRASH ---
+    pdf.set_font(style='B')
     pdf.cell(150, 8, txt("TỔNG CỘNG THANH TOÁN:"), 1, 0, 'R')
     pdf.cell(40, 8, format_currency(final_total), 1, 1, 'R')
+    pdf.set_font(style='')
     pdf.ln(10)
     
     money_text = ""
@@ -414,7 +447,6 @@ def main():
                 return
 
             # --- 1. HIỂN THỊ DẠNG BẢNG (MASTER VIEW) ---
-            # Chuẩn bị dữ liệu cho dataframe
             table_data = []
             for o in current_orders:
                 cust = o.get('customer', {})
@@ -435,13 +467,12 @@ def main():
             
             df_display = pd.DataFrame(table_data)
             
-            # Cấu hình hiển thị bảng chọn
             event = st.dataframe(
                 df_display,
                 use_container_width=True,
                 hide_index=True,
-                selection_mode="single-row", # Chỉ chọn 1 dòng
-                on_select="rerun", # Chạy lại khi chọn
+                selection_mode="single-row",
+                on_select="rerun",
                 column_config={
                     "Tổng tiền": st.column_config.NumberColumn(format="%.0f đ"),
                     "Còn nợ": st.column_config.NumberColumn(format="%.0f đ"),
@@ -457,7 +488,6 @@ def main():
                 st.divider()
                 st.subheader(f"🛠️ Xử lý đơn hàng: {oid}")
                 
-                # Load lại data đầy đủ để xử lý
                 cust = selected_order_data.get('customer', {})
                 items = selected_order_data.get('items', [])
                 fin = selected_order_data.get('financial', {})
@@ -469,21 +499,18 @@ def main():
                 comm_val = fin.get('total_comm', 0)
                 comm_stat = fin.get('commission_status', 'Chưa chi')
 
-                # Cột thông tin chi tiết
                 col_d1, col_d2 = st.columns([2, 1])
                 
                 with col_d1:
                     st.write(f"👤 **Khách hàng:** {cust.get('name')} - {cust.get('phone')}")
                     st.write(f"📍 **Địa chỉ:** {cust.get('address')}")
                     
-                    # Bảng hàng hóa chi tiết
                     st.write("📦 **Chi tiết hàng hóa:**")
                     df_items = pd.DataFrame(items)
                     cols = ["name", "unit", "qty", "price", "vat_rate", "total_line"]
                     if set(cols).issubset(df_items.columns):
                         df_show = df_items[cols].copy()
                         df_show.columns = ["Tên", "ĐVT", "SL", "Giá", "%VAT", "Thành tiền"]
-                        # Format tiền
                         df_show['Giá'] = df_show['Giá'].apply(format_currency)
                         df_show['Thành tiền'] = df_show['Thành tiền'].apply(format_currency)
                         st.dataframe(df_show, hide_index=True, use_container_width=True)
@@ -507,24 +534,30 @@ def main():
 
                 # --- THANH CÔNG CỤ (BUTTONS) ---
                 st.write("---")
-                c_act1, c_act2, c_act3 = st.columns(3)
+                # Thêm cột thứ 4 cho nút In Giao Hàng
+                c_act1, c_act2, c_act3, c_act4 = st.columns(4)
                 
-                # 1. In PDF
+                # 1. In Báo Giá
                 with c_act1:
                     if pdf_type:
                         pdf_data = create_pdf(selected_order_data, pdf_type)
                         st.download_button(f"🖨️ In {pdf_type}", pdf_data, f"{oid}.pdf", "application/pdf", key=f"dl_{oid}", use_container_width=True)
                 
-                # 2. Chuyển trạng thái (Nếu có)
+                # 2. In Phiếu Giao Hàng (NÚT MỚI)
                 with c_act2:
+                    pdf_gh = create_pdf(selected_order_data, "PHIẾU GIAO HÀNG, KIÊM PHIẾU THU")
+                    st.download_button("🚚 In Phiếu Giao", pdf_gh, f"GH_{oid}.pdf", "application/pdf", key=f"dl_gh_{oid}", use_container_width=True)
+
+                # 3. Chuyển trạng thái
+                with c_act3:
                     if next_status:
                         if st.button(f"{btn_text} ➡️", key=f"mv_{oid}", type="primary", use_container_width=True):
                             update_order_status(oid, next_status)
                             st.rerun()
                 
-                # 3. Xóa
-                with c_act3:
-                    if st.button("🗑️ Xóa Đơn Này", key=f"del_{oid}", use_container_width=True):
+                # 4. Xóa
+                with c_act4:
+                    if st.button("🗑️ Xóa Đơn", key=f"del_{oid}", use_container_width=True):
                         if delete_order(oid):
                             st.success("Đã xóa!")
                             time.sleep(1)
@@ -536,7 +569,6 @@ def main():
                 
                 tab_pay, tab_edit = st.tabs(["💸 Thu Tiền", "✏️ Sửa Đơn Hàng"])
                 
-                # Tab Thu Tiền
                 with tab_pay:
                     c_p1, c_p2 = st.columns(2)
                     pay_method = c_p1.radio("Hình thức:", ["Một phần", "Toàn bộ"], horizontal=True, key=f"pm_{oid}")
@@ -561,7 +593,6 @@ def main():
                             st.rerun()
                         else: st.warning("Số tiền phải lớn hơn 0")
 
-                # Tab Sửa Đơn
                 with tab_edit:
                     with st.form(f"form_edit_{oid}"):
                         ce1, ce2 = st.columns(2)
@@ -570,7 +601,6 @@ def main():
                         new_addr = st.text_input("Địa chỉ", value=cust.get('address'))
                         
                         st.write("📋 **Sửa Hàng Hóa & Giá:**")
-                        # Data editor cho phép sửa trực tiếp
                         df_edit = pd.DataFrame(items)
                         edited_df = st.data_editor(
                             df_edit,
@@ -587,7 +617,6 @@ def main():
                         )
                         
                         if st.form_submit_button("Lưu Thay Đổi"):
-                            # Tính toán lại toàn bộ
                             new_items_data = edited_df.to_dict('records')
                             recalc_total = 0
                             
@@ -617,7 +646,7 @@ def main():
         with tabs[1]: render_tab_content("Thiết kế", "Sản xuất", "✅ Duyệt TK -> Sản Xuất")
         with tabs[2]: render_tab_content("Sản xuất", "Giao hàng", "✅ Xong -> Giao Hàng")
         with tabs[3]: render_tab_content("Giao hàng", "Công nợ", "✅ Giao Xong -> Công Nợ", "PHIẾU GIAO HÀNG")
-        with tabs[4]: render_tab_content("Công nợ", None, "") # Không có nút chuyển tiếp, chỉ thanh toán
+        with tabs[4]: render_tab_content("Công nợ", None, "")
 
         with tabs[5]: # Hoàn thành
             orders = [o for o in all_orders if o.get('status') == 'Hoàn thành']
