@@ -200,7 +200,7 @@ def gen_id():
         if str(o.get('order_id', '')).endswith(year): count += 1
     return f"{count+1:03d}/DH.{year}"
 
-# --- PDF GENERATOR (CHUẨN HÓA) ---
+# --- PDF GENERATOR ---
 class PDFGen(FPDF):
     def header(self): pass
 
@@ -257,12 +257,9 @@ def create_pdf(order, title):
     
     for i, item in enumerate(items):
         try: 
-            # Lấy giá bán (không phải giá vốn)
             price = float(item.get('price', 0))
             qty = float(item.get('qty', 0))
-            # Thành tiền chưa VAT
             line_total = price * qty
-            # Tính VAT
             vat_rate = float(item.get('vat_rate', 0))
             vat_val = line_total * (vat_rate / 100)
         except: line_total = 0; vat_val = 0
@@ -278,7 +275,6 @@ def create_pdf(order, title):
         pdf.cell(40, 8, format_currency(line_total), 1, 1, 'R')
         pdf.ln(8)
     
-    # Tổng kết
     final_total = sum_items_total + total_vat
     
     pdf.cell(150, 8, txt("Cộng tiền hàng:"), 1, 0, 'R')
@@ -312,11 +308,10 @@ def main():
     if 'cart' not in st.session_state: st.session_state.cart = []
     if 'last_order' not in st.session_state: st.session_state.last_order = None
 
-    # --- TAB 1: TẠO BÁO GIÁ (LOGIC MỚI) ---
+    # --- TAB 1: TẠO BÁO GIÁ ---
     if menu == "1. Tạo Báo Giá":
         st.title("📝 Tạo Báo Giá Mới")
         
-        # 1. Chọn nhân viên TRƯỚC để tính hoa hồng
         c1, c2 = st.columns(2)
         name = c1.text_input("Tên Khách Hàng", key="in_name")
         phone = c2.text_input("Số Điện Thoại", key="in_phone")
@@ -326,54 +321,40 @@ def main():
         st.divider()
         st.subheader("2. Chi tiết hàng hóa & Giá")
         with st.form("add_item_form", clear_on_submit=True):
-            # Layout hàng hóa
             col1, col2, col3 = st.columns([3, 1, 1])
             i_name = col1.text_input("Tên hàng / Quy cách")
             i_unit = col2.text_input("ĐVT (Cái/M2)")
             i_qty = col3.number_input("Số lượng", 1.0, step=1.0)
             
-            # Layout giá và lợi nhuận
             col4, col5, col6 = st.columns(3)
-            i_cost = col4.number_input("Giá Vốn (Giá gốc)", 0.0, step=1000.0, help="Dùng để tính lợi nhuận")
-            i_price = col5.number_input("Giá Bán (Đơn giá)", 0.0, step=1000.0, help="Giá báo cho khách")
+            i_cost = col4.number_input("Giá Vốn (Giá gốc)", 0.0, step=1000.0)
+            i_price = col5.number_input("Giá Bán (Đơn giá)", 0.0, step=1000.0)
             i_vat = col6.number_input("% VAT", 0.0, 100.0, 0.0, step=1.0)
             
             if st.form_submit_button("➕ Thêm vào danh sách"):
                 if i_name:
-                    # LOGIC TÍNH TOÁN
-                    total_sell = i_qty * i_price # Doanh thu chưa VAT
-                    total_cost = i_qty * i_cost  # Tổng giá vốn
-                    vat_amt = total_sell * (i_vat / 100) # Tiền VAT
+                    total_sell = i_qty * i_price
+                    total_cost = i_qty * i_cost
+                    vat_amt = total_sell * (i_vat / 100)
+                    profit = total_sell - total_cost
                     
-                    profit = total_sell - total_cost # Lợi nhuận (Chưa trừ VAT đầu ra, tính đơn giản)
-                    
-                    # LOGIC HOA HỒNG
-                    comm_rate = 0.3 # Mặc định
+                    comm_rate = 0.3
                     if staff in ["Nam", "Dương"]: comm_rate = 0.6
                     elif staff == "Vạn": comm_rate = 0.5
-                    
                     commission = profit * comm_rate if profit > 0 else 0
                     
                     st.session_state.cart.append({
-                        "name": i_name, 
-                        "unit": i_unit,
-                        "qty": i_qty, 
-                        "cost": i_cost,
-                        "price": i_price,
-                        "vat_rate": i_vat,
-                        "vat_amt": vat_amt,
-                        "profit": profit,
-                        "commission": commission,
-                        "total_line": total_sell + vat_amt # Tổng dòng gồm VAT
+                        "name": i_name, "unit": i_unit, "qty": i_qty, "cost": i_cost,
+                        "price": i_price, "vat_rate": i_vat, "vat_amt": vat_amt,
+                        "profit": profit, "commission": commission,
+                        "total_line": total_sell + vat_amt
                     })
                     st.rerun()
                 else: st.error("Nhập tên hàng!")
 
         if st.session_state.cart:
             st.write("---")
-            # Hiển thị bảng chi tiết
             cart_df = pd.DataFrame(st.session_state.cart)
-            
             view_df = cart_df.copy()
             for col in ['cost', 'price', 'vat_amt', 'profit', 'commission', 'total_line']:
                 view_df[col] = view_df[col].apply(format_currency)
@@ -381,15 +362,14 @@ def main():
             view_df.columns = ["Tên hàng", "ĐVT", "SL", "Giá Vốn", "Giá Bán", "% VAT", "Tiền VAT", "Lợi Nhuận", "Hoa Hồng", "Giá Hoá Đơn"]
             st.dataframe(view_df, use_container_width=True)
             
-            # Tính tổng đơn
             total_final = sum(i['total_line'] for i in st.session_state.cart)
             total_profit = sum(i['profit'] for i in st.session_state.cart)
             total_comm = sum(i['commission'] for i in st.session_state.cart)
             
             m1, m2, m3 = st.columns(3)
-            m1.metric("TỔNG GIÁ TRỊ ĐƠN (Gồm VAT)", format_currency(total_final))
+            m1.metric("TỔNG GIÁ TRỊ (Gồm VAT)", format_currency(total_final))
             m2.metric("TỔNG LỢI NHUẬN", format_currency(total_profit))
-            m3.metric("TỔNG HOA HỒNG NV", format_currency(total_comm))
+            m3.metric("TỔNG HOA HỒNG", format_currency(total_comm))
             
             c_del, c_save = st.columns(2)
             if c_del.button("🗑️ Xóa giỏ"):
@@ -405,13 +385,8 @@ def main():
                         "customer": {"name": name, "phone": phone, "address": addr},
                         "items": st.session_state.cart,
                         "financial": {
-                            "total": total_final, 
-                            "paid": 0, 
-                            "debt": total_final, 
-                            "staff": staff, 
-                            "total_profit": total_profit,
-                            "total_comm": total_comm,
-                            "commission_status": "Chưa chi"
+                            "total": total_final, "paid": 0, "debt": total_final, "staff": staff, 
+                            "total_profit": total_profit, "total_comm": total_comm, "commission_status": "Chưa chi"
                         }
                     }
                     if add_new_order(new_order):
@@ -421,4 +396,193 @@ def main():
 
         if st.session_state.last_order:
             oid = st.session_state.last_order['order_id']
-            st.success(f"✅ Đã tạo: {oid
+            st.success(f"✅ Đã tạo: {oid}")
+            pdf_bytes = create_pdf(st.session_state.last_order, "BÁO GIÁ")
+            st.download_button("🖨️ Tải PDF", pdf_bytes, f"BG_{oid}.pdf", "application/pdf", type="primary")
+
+    # --- TAB 2: QUẢN LÝ ---
+    elif menu == "2. Quản Lý Đơn Hàng (Pipeline)":
+        st.title("🏭 Quy Trình Sản Xuất")
+        all_orders = fetch_all_orders()
+        tabs = st.tabs(["1️⃣ Báo Giá", "2️⃣ Thiết Kế", "3️⃣ Sản Xuất", "4️⃣ Giao Hàng", "5️⃣ Công Nợ", "✅ Hoàn Thành"])
+        
+        def render_tab_content(status_filter, next_status, btn_text, pdf_type=None):
+            orders = [o for o in all_orders if o.get('status') == status_filter]
+            if not orders: st.info("Trống.")
+            
+            for o in orders:
+                oid = o.get('order_id')
+                cust = o.get('customer', {})
+                items = o.get('items', [])
+                fin = o.get('financial', {})
+                
+                total = float(fin.get('total', 0))
+                paid = float(fin.get('paid', 0))
+                debt = total - paid
+                
+                pay_stat = o.get('payment_status', 'Chưa TT')
+                comm_stat = fin.get('commission_status', 'Chưa chi')
+                profit_val = fin.get('total_profit', 0)
+                comm_val = fin.get('total_comm', 0)
+
+                with st.expander(f"📄 {oid} | {cust.get('name')} | Còn: {format_currency(debt)}"):
+                    c_info, c_items, c_fin = st.columns([1.5, 2, 1.5])
+                    
+                    with c_info:
+                        st.write("👤 **Khách:** " + cust.get('name'))
+                        st.caption(f"SĐT: {cust.get('phone')} | ĐC: {cust.get('address')}")
+                        st.write(f"📅 {o.get('date')} | 🔄 {status_filter}")
+
+                    with c_items:
+                        st.write("📦 **Hàng hóa:**")
+                        if items:
+                            df_i = pd.DataFrame(items)
+                            cols_to_show = ["name", "qty", "price", "total_line"]
+                            if set(cols_to_show).issubset(df_i.columns):
+                                df_show = df_i[cols_to_show].copy()
+                                df_show.columns = ["Tên", "SL", "Giá bán", "Thành tiền"]
+                                st.dataframe(df_show, hide_index=True, use_container_width=True)
+                            else: st.dataframe(df_i, hide_index=True)
+
+                    with c_fin:
+                        st.info(f"💰 Tổng đơn: **{format_currency(total)}**")
+                        st.write(f"Đã trả: {format_currency(paid)}")
+                        st.write(f"Còn nợ: **{format_currency(debt)}**")
+                        
+                        with st.popover("👁️ Xem Lợi Nhuận & Hoa Hồng"):
+                            st.write(f"Lợi nhuận đơn: {format_currency(profit_val)}")
+                            st.write(f"Hoa hồng NV ({fin.get('staff')}): {format_currency(comm_val)}")
+                            st.write(f"Trạng thái HH: **{comm_stat}**")
+                            if comm_stat != "Đã chi":
+                                if st.button("Xác nhận đã chi HH", key=f"pay_comm_{oid}"):
+                                    update_commission_status(oid, "Đã chi")
+                                    st.rerun()
+
+                    st.divider()
+                    
+                    st.write("💳 **THANH TOÁN:**")
+                    c_pay1, c_pay2, c_pay3 = st.columns([1, 1, 1])
+                    with c_pay1:
+                        pay_method = st.radio("Hình thức:", ["Một phần", "Toàn bộ"], key=f"pm_{oid}", horizontal=True)
+                    with c_pay2:
+                        pay_amount = float(debt) if pay_method == "Toàn bộ" else st.number_input("Số tiền:", 0.0, float(debt), float(debt), key=f"p_input_{oid}")
+                        st.write(f"Sẽ thu: **{format_currency(pay_amount)}**")
+                    with c_pay3:
+                        st.write("")
+                        if st.button("💸 Thu Tiền", key=f"confirm_pay_{oid}"):
+                            if pay_amount > 0:
+                                new_st = status_filter
+                                pay_stat_new = "Đã TT" if (debt - pay_amount) <= 0 else "Cọc/Còn nợ"
+                                if (debt - pay_amount) <= 0 and status_filter == "Công nợ": new_st = "Hoàn thành" 
+                                update_order_status(oid, new_st, pay_stat_new, pay_amount)
+                                save_cash_log(datetime.now().strftime("%Y-%m-%d"), "Thu", pay_amount, f"Thu tiền {oid}")
+                                st.success("Thành công!")
+                                time.sleep(1)
+                                st.rerun()
+                            else: st.warning("Số tiền phải > 0")
+
+                    st.divider()
+                    c1, c2, c3 = st.columns([1, 1, 2])
+                    if pdf_type:
+                        pdf = create_pdf(o, pdf_type)
+                        c1.download_button(f"🖨️ In {pdf_type}", pdf, f"{oid}.pdf", "application/pdf")
+                    if next_status:
+                        if c2.button(btn_text, key=f"mv_{oid}"):
+                            update_order_status(oid, next_status)
+                            st.rerun()
+                    
+                    with st.expander("🛠️ Sửa / Xóa"):
+                        with st.form(f"edit_{oid}"):
+                            col_e1, col_e2 = st.columns(2)
+                            e_name = col_e1.text_input("Tên", value=cust.get('name'))
+                            e_phone = col_e2.text_input("SĐT", value=cust.get('phone'))
+                            e_addr = st.text_input("ĐC", value=cust.get('address'))
+                            st.write("📋 **Sửa hàng hóa:**")
+                            df_edit = pd.DataFrame(items)
+                            edited_df = st.data_editor(
+                                df_edit, num_rows="dynamic",
+                                column_config={
+                                    "name": "Tên hàng", "unit": "ĐVT",
+                                    "qty": st.column_config.NumberColumn("SL"),
+                                    "cost": st.column_config.NumberColumn("Giá Vốn"),
+                                    "price": st.column_config.NumberColumn("Giá Bán"),
+                                    "vat_rate": st.column_config.NumberColumn("% VAT"),
+                                }, key=f"editor_{oid}"
+                            )
+                            if st.form_submit_button("Lưu Thay Đổi"):
+                                new_items_list = edited_df.to_dict('records')
+                                new_total_final = 0
+                                for item in new_items_list:
+                                    qty = float(item.get('qty', 0))
+                                    price = float(item.get('price', 0))
+                                    vat = float(item.get('vat_rate', 0))
+                                    line_total = qty * price
+                                    vat_amt = line_total * (vat / 100)
+                                    item['vat_amt'] = vat_amt
+                                    item['total_line'] = line_total + vat_amt
+                                    item['profit'] = line_total - (qty * float(item.get('cost', 0)))
+                                    new_total_final += item['total_line']
+                                new_cust = {"name": e_name, "phone": e_phone, "address": e_addr}
+                                if edit_order_info(oid, new_cust, new_total_final, new_items_list):
+                                    st.success("Đã cập nhật!")
+                                    time.sleep(1)
+                                    st.rerun()
+                        if st.button("🗑️ Xóa vĩnh viễn", key=f"del_{oid}", type="primary"):
+                            if delete_order(oid): st.rerun()
+
+        with tabs[0]: render_tab_content("Báo giá", "Thiết kế", "✅ Duyệt -> Thiết Kế", "BÁO GIÁ")
+        with tabs[1]: render_tab_content("Thiết kế", "Sản xuất", "✅ Duyệt TK -> Sản Xuất")
+        with tabs[2]: render_tab_content("Sản xuất", "Giao hàng", "✅ Xong -> Giao Hàng")
+        with tabs[3]: render_tab_content("Giao hàng", "Công nợ", "✅ Giao Xong -> Công Nợ", "PHIẾU GIAO HÀNG")
+        with tabs[4]: # Công nợ
+            orders = [o for o in all_orders if o.get('status') == 'Công nợ']
+            if not orders: st.info("Hết nợ.")
+            render_tab_content("Công nợ", None, "")
+
+        with tabs[5]: # Hoàn thành
+            orders = [o for o in all_orders if o.get('status') == 'Hoàn thành']
+            if orders:
+                data = []
+                for o in orders:
+                    data.append({
+                        "Mã": o['order_id'], "Khách": o['customer']['name'],
+                        "Tổng tiền": format_currency(o['financial']['total']),
+                        "Trạng thái": o.get('payment_status'),
+                        "Hoa hồng": o['financial'].get('commission_status')
+                    })
+                st.dataframe(pd.DataFrame(data), use_container_width=True)
+
+    # --- TAB 3: TÀI CHÍNH ---
+    elif menu == "3. Sổ Quỹ & Báo Cáo":
+        st.title("📊 Tài Chính")
+        tab1, tab2 = st.tabs(["Sổ Quỹ", "Báo Cáo"])
+        with tab1:
+            df = pd.DataFrame(fetch_cashbook())
+            if not df.empty:
+                df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
+                thu = df[df['type'] == 'Thu']['amount'].sum()
+                chi = df[df['type'] == 'Chi']['amount'].sum()
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Thu", format_currency(thu))
+                c2.metric("Chi", format_currency(chi))
+                c3.metric("Tồn", format_currency(thu - chi))
+                st.divider()
+            with st.form("expense"):
+                c1, c2, c3 = st.columns(3)
+                d = c1.date_input("Ngày")
+                a = c2.number_input("Chi phí", 0, step=10000)
+                desc = c3.text_input("Nội dung")
+                if st.form_submit_button("Lưu Chi"):
+                    save_cash_log(d, "Chi", a, desc)
+                    st.rerun()
+            if not df.empty: st.dataframe(df, use_container_width=True)
+        with tab2:
+            orders = fetch_all_orders()
+            if orders:
+                df = pd.DataFrame([{"Status": o.get('status'), "Staff": o.get('financial', {}).get('staff'), "Total": o.get('financial', {}).get('total', 0)} for o in orders])
+                if not df.empty:
+                    st.bar_chart(df['Status'].value_counts())
+                    st.bar_chart(df.groupby("Staff")['Total'].sum())
+
+if __name__ == "__main__":
+    main()
