@@ -15,10 +15,10 @@ FONT_PATH = 'Arial.ttf'
 # [1] DÁN LINK GOOGLE SHEET CỦA BẠN VÀO DƯỚI ĐÂY:
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit" 
 
-# [2] THÔNG TIN ĐĂNG NHẬP
-# Đây là Dictionary chứa thông tin từ file JSON của bạn.
-# Tôi đã để nguyên định dạng, code bên dưới sẽ tự động xử lý lỗi \n.
-CREDENTIALS_DICT = {
+# [2] CHÌA KHÓA BẢO MẬT (DẠNG RAW STRING - KHÔNG ĐƯỢC SỬA)
+# Sử dụng r"""...""" để đảm bảo Python không tự động thay đổi ký tự đặc biệt
+RAW_JSON_STR = r"""
+{
   "type": "service_account",
   "project_id": "quanlyinan",
   "private_key_id": "becc31a465356195dbb8352429f10ec4a76a3dad",
@@ -31,6 +31,7 @@ CREDENTIALS_DICT = {
   "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/quanlyinan%40quanlyinan.iam.gserviceaccount.com",
   "universe_domain": "googleapis.com"
 }
+"""
 
 # --- HÀM TIỆN ÍCH ---
 def format_currency(value):
@@ -47,28 +48,23 @@ def read_money(amount):
     except:
         return "..................... đồng."
 
-# --- KẾT NỐI GOOGLE SHEETS (FIX LỖI PRIVATE KEY) ---
+# --- KẾT NỐI GOOGLE SHEETS (PARSE JSON RAW - CHUẨN XÁC TUYỆT ĐỐI) ---
 @st.cache_resource
 def get_gspread_client():
     try:
-        # Tạo bản sao để không ảnh hưởng dữ liệu gốc
-        creds_data = CREDENTIALS_DICT.copy()
+        # Dùng json.loads để Python tự xử lý các ký tự \n chuẩn xác như đọc file
+        creds_dict = json.loads(RAW_JSON_STR)
         
-        # [QUAN TRỌNG] Tự động thay thế \\n thành \n (xuống dòng thật)
-        # Đây là bước quyết định để sửa lỗi Invalid JWT
-        if 'private_key' in creds_data:
-            creds_data['private_key'] = creds_data['private_key'].replace('\\n', '\n')
-
         scope = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
         
-        creds = Credentials.from_service_account_info(creds_data, scopes=scope)
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(creds)
         return client
     except Exception as e:
-        st.error(f"Lỗi xác thực Google (JWT Error): {e}")
+        st.error(f"Lỗi xác thực Google: {e}")
         return None
 
 def load_db():
@@ -82,6 +78,7 @@ def load_db():
         data = []
         for item in all_records:
             try:
+                # Parse JSON string trong các cột nếu có
                 if isinstance(item.get('customer'), str) and item['customer']:
                     item['customer'] = json.loads(item['customer'])
                 if isinstance(item.get('items'), str) and item['items']:
@@ -93,12 +90,13 @@ def load_db():
                 continue
         return data
     except gspread.WorksheetNotFound:
+        # Nếu chưa có sheet, trả về rỗng
         return []
     except Exception as e:
-        # Nếu lỗi là do chưa chia sẻ quyền, thông báo rõ hơn
         if "403" in str(e):
-            st.error("Lỗi quyền truy cập: Bạn chưa chia sẻ file Google Sheet cho email service account.")
-            st.info(f"Hãy chia sẻ quyền Editor cho: {CREDENTIALS_DICT['client_email']}")
+            st.error(f"⚠️ LỖI QUYỀN: Bạn chưa chia sẻ file Google Sheet cho email robot.")
+            st.info("Hãy copy email này: **quanlyinan@quanlyinan.iam.gserviceaccount.com**")
+            st.info("Vào Google Sheet -> Nút 'Chia sẻ' -> Dán email vào và chọn quyền 'Người chỉnh sửa'.")
         else:
             st.error(f"Lỗi tải dữ liệu: {e}")
         return []
@@ -120,6 +118,7 @@ def save_db(data):
         data_to_save = []
         for item in data:
             clean_item = item.copy()
+            # Chuyển đổi dict thành json string để lưu vào ô
             clean_item['customer'] = json.dumps(item['customer'], ensure_ascii=False)
             clean_item['items'] = json.dumps(item['items'], ensure_ascii=False)
             clean_item['financial'] = json.dumps(item['financial'], ensure_ascii=False)
@@ -128,6 +127,7 @@ def save_db(data):
         df = pd.DataFrame(data_to_save)
         worksheet.clear()
         if not df.empty:
+            # Ghi header và data
             worksheet.update([df.columns.values.tolist()] + df.values.tolist())
         st.cache_data.clear()
         
@@ -158,7 +158,10 @@ def save_cash(df):
         
         worksheet.clear()
         if not df.empty:
-            worksheet.update([df.columns.values.tolist()] + df.values.tolist())
+            # Chuyển đổi ngày tháng thành string để tránh lỗi JSON serializable
+            df_save = df.copy()
+            df_save['Ngày'] = df_save['Ngày'].astype(str)
+            worksheet.update([df_save.columns.values.tolist()] + df_save.values.tolist())
         st.cache_data.clear()
     except Exception as e:
         st.error(f"Lỗi lưu Sổ quỹ: {e}")
