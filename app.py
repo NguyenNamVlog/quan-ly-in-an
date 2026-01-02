@@ -4,7 +4,6 @@ import json
 import time
 import os
 import requests
-import unicodedata
 from datetime import datetime
 from fpdf import FPDF
 from docxtpl import DocxTemplate
@@ -18,23 +17,19 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZM
 TEMPLATE_CONTRACT = 'Hop dong .docx' 
 FONT_FILENAME = 'Roboto-Regular.ttf'
 
-# --- HÀM HỖ TRỢ: XỬ LÝ TIẾNG VIỆT & FONT ---
+# --- HÀM HỖ TRỢ: TẢI FONT (BẮT BUỘC CHO FPDF2) ---
 def check_and_download_font():
-    """Tải font Roboto nếu chưa có"""
+    """Tải font Roboto nếu chưa có. FPDF2 bắt buộc phải có font TTF để in tiếng Việt."""
     if not os.path.exists(FONT_FILENAME):
         try:
             url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf"
             response = requests.get(url)
             with open(FONT_FILENAME, 'wb') as f:
                 f.write(response.content)
-        except: pass
+        except Exception as e:
+            st.error(f"Lỗi tải font: {e}")
 
-def remove_accents(input_str):
-    """Chuyển tiếng Việt có dấu thành không dấu (Fallback an toàn)"""
-    if not isinstance(input_str, str): return str(input_str)
-    nfkd_form = unicodedata.normalize('NFKD', input_str)
-    return "".join([c for c in nfkd_form if not unicodedata.combining(c)])
-
+# --- HÀM HỖ TRỢ TIỀN TỆ ---
 def format_currency(value):
     if value is None: return "0"
     try: return "{:,.0f}".format(float(value))
@@ -53,6 +48,7 @@ def get_gspread_client():
             return None
         
         creds_dict = dict(st.secrets["service_account"])
+        # Fix lỗi xuống dòng trong Private Key
         if "private_key" in creds_dict:
             creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         
@@ -166,66 +162,80 @@ def gen_id():
         if str(o.get('order_id', '')).endswith(year): count += 1
     return f"{count+1:03d}/DH.{year}"
 
-# --- PDF GENERATOR (AN TOÀN TUYỆT ĐỐI) ---
+# --- PDF GENERATOR (CHUẨN FPDF2 - TIẾNG VIỆT) ---
 class PDFGen(FPDF):
     def header(self):
+        # Đảm bảo font đã tải
         check_and_download_font()
+        # Đăng ký font Roboto (quan trọng)
+        # Trong fpdf2, ta dùng add_font(family, style, fname)
         try:
-            self.add_font('Roboto', '', FONT_FILENAME, uni=True)
+            self.add_font('Roboto', '', FONT_FILENAME)
             self.set_font('Roboto', '', 14)
-            # Tiêu đề sẽ được set trong body để kiểm soát lỗi font
-        except: pass
+            self.cell(0, 10, 'CÔNG TY IN ẤN AN LỘC PHÁT', new_x="LMARGIN", new_y="NEXT", align='C')
+            self.ln(5)
+        except Exception as e:
+            # Nếu lỗi font, fallback về Helvetica (chấp nhận lỗi tiếng Việt để không sập)
+            self.set_font('Helvetica', '', 14)
+            self.cell(0, 10, 'CONG TY IN AN AN LOC PHAT', new_x="LMARGIN", new_y="NEXT", align='C')
+            self.ln(5)
 
-def generate_pdf_content(order, title, safe_mode=False):
+def create_pdf(order, title):
+    # Khởi tạo PDF
     pdf = PDFGen()
     pdf.add_page()
     
-    # Chọn font
+    # Check lại font lần nữa để chắc chắn
     check_and_download_font()
-    font_name = 'Arial'
-    if not safe_mode:
-        try:
-            pdf.add_font('Roboto', '', FONT_FILENAME, uni=True)
-            font_name = 'Roboto'
-        except: font_name = 'Arial'
     
-    pdf.set_font(font_name, '', 11)
+    # Cài đặt font chính
+    try:
+        pdf.add_font('Roboto', '', FONT_FILENAME)
+        pdf.set_font('Roboto', '', 11)
+        has_font = True
+    except:
+        pdf.set_font('Helvetica', '', 11)
+        has_font = False
 
-    # Hàm xử lý text (nếu safe_mode=True thì bỏ dấu)
-    def txt(s):
-        s = str(s) if s else ""
-        return remove_accents(s) if safe_mode else s
+    # Hàm wrapper để xử lý text: Nếu không có font thì bỏ dấu
+    def txt(text):
+        if not text: return ""
+        text = str(text)
+        if has_font: return text
+        # Fallback: bỏ dấu nếu không load được font (tránh crash)
+        import unicodedata
+        return "".join([c for c in unicodedata.normalize('NFKD', text) if not unicodedata.combining(c)])
 
-    # Header Công Ty
-    pdf.set_font(font_name, '', 14)
-    pdf.cell(0, 10, txt('CÔNG TY IN ẤN AN LỘC PHÁT'), 0, 1, 'C')
-    pdf.ln(5)
-
+    # --- NỘI DUNG PDF ---
+    
     # Tiêu đề
     pdf.set_font_size(16)
-    pdf.cell(0, 10, txt(title), 0, 1, 'C')
+    pdf.cell(0, 10, txt(title), new_x="LMARGIN", new_y="NEXT", align='C')
     
-    # Thông tin đơn
+    # Thông tin chung
     pdf.set_font_size(11)
     oid = order.get('order_id', '')
     odate = order.get('date', '')
-    pdf.cell(0, 8, txt(f"Mã: {oid} | Ngày: {odate}"), 0, 1, 'C')
+    pdf.cell(0, 8, txt(f"Mã số: {oid} | Ngày: {odate}"), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.ln(5)
     
+    # Thông tin khách
     cust = order.get('customer', {})
-    pdf.cell(0, 7, txt(f"Khách hàng: {cust.get('name', '')}"), 0, 1)
-    pdf.cell(0, 7, txt(f"SĐT: {cust.get('phone', '')}"), 0, 1)
-    pdf.cell(0, 7, txt(f"Địa chỉ: {cust.get('address', '')}"), 0, 1)
+    pdf.cell(0, 7, txt(f"Khách hàng: {cust.get('name', '')}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, txt(f"Điện thoại: {cust.get('phone', '')}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, txt(f"Địa chỉ: {cust.get('address', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(5)
     
-    # Table Header
-    pdf.set_fill_color(220, 220, 220)
-    pdf.cell(10, 8, "STT", 1, 0, 'C', 1)
-    pdf.cell(80, 8, txt("Tên hàng"), 1, 0, 'C', 1)
-    pdf.cell(20, 8, "SL", 1, 0, 'C', 1)
-    pdf.cell(30, 8, txt("Đơn giá"), 1, 0, 'C', 1)
-    pdf.cell(40, 8, txt("Thành tiền"), 1, 1, 'C', 1)
+    # Bảng hàng hóa
+    # Header bảng
+    pdf.set_fill_color(230, 230, 230)
+    pdf.cell(10, 8, "STT", border=1, align='C', fill=True)
+    pdf.cell(90, 8, txt("Tên hàng / Quy cách"), border=1, align='C', fill=True)
+    pdf.cell(20, 8, "SL", border=1, align='C', fill=True)
+    pdf.cell(30, 8, txt("Đơn giá"), border=1, align='C', fill=True)
+    pdf.cell(40, 8, txt("Thành tiền"), border=1, align='C', fill=True, new_x="LMARGIN", new_y="NEXT")
     
+    # Dữ liệu bảng
     total = 0
     items = order.get('items', [])
     for i, item in enumerate(items):
@@ -233,30 +243,25 @@ def generate_pdf_content(order, title, safe_mode=False):
         except: item_total = 0
         total += item_total
         
-        pdf.cell(10, 8, str(i+1), 1, 0, 'C')
-        pdf.cell(80, 8, txt(item.get('name', '')), 1, 0)
-        pdf.cell(20, 8, str(item.get('qty', 0)), 1, 0, 'C')
-        pdf.cell(30, 8, format_currency(item.get('price', 0)), 1, 0, 'R')
-        pdf.cell(40, 8, format_currency(item_total), 1, 1, 'R')
+        # In từng dòng
+        pdf.cell(10, 8, str(i+1), border=1, align='C')
+        pdf.cell(90, 8, txt(item.get('name', '')), border=1)
+        pdf.cell(20, 8, txt(str(item.get('qty', 0))), border=1, align='C')
+        pdf.cell(30, 8, format_currency(item.get('price', 0)), border=1, align='R')
+        pdf.cell(40, 8, format_currency(item_total), border=1, align='R', new_x="LMARGIN", new_y="NEXT")
     
-    pdf.cell(140, 8, txt("TỔNG CỘNG:"), 1, 0, 'R')
-    pdf.cell(40, 8, format_currency(total), 1, 1, 'R')
-    pdf.ln(10)
+    # Tổng cộng
+    pdf.cell(150, 8, txt("TỔNG CỘNG:"), border=1, align='R')
+    pdf.cell(40, 8, format_currency(total), border=1, align='R', new_x="LMARGIN", new_y="NEXT")
     
+    pdf.ln(5)
     money_text = read_money_vietnamese(total)
     pdf.multi_cell(0, 8, txt(f"Bằng chữ: {money_text}"))
     
-    return bytes(pdf.output())
+    # Trả về bytes cho Streamlit
+    return pdf.output()  # fpdf2 trả về bytearray mặc định, không cần bytes()
 
-def create_pdf(order, title):
-    """Thử in có dấu, nếu lỗi thì in không dấu"""
-    try:
-        return generate_pdf_content(order, title, safe_mode=False)
-    except Exception as e:
-        # Nếu lỗi UnicodeEncodeError, chạy lại với chế độ không dấu
-        return generate_pdf_content(order, title, safe_mode=True)
-
-# --- UI MAIN ---
+# --- GIAO DIỆN CHÍNH ---
 def main():
     st.set_page_config(page_title="Hệ Thống In Ấn", layout="wide")
     menu = st.sidebar.radio("CHỨC NĂNG", ["1. Tạo Báo Giá", "2. Quản Lý Đơn Hàng (Pipeline)", "3. Sổ Quỹ & Báo Cáo"])
@@ -305,7 +310,7 @@ def main():
                 with st.expander(f"📄 {oid} | {cname} | {format_currency(total)}"):
                     c1, c2 = st.columns(2)
                     pdf = create_pdf(o, "BÁO GIÁ")
-                    if pdf: c1.download_button("🖨️ Tải PDF", pdf, f"BG_{oid}.pdf")
+                    if pdf: c1.download_button("🖨️ Tải PDF", pdf, f"BG_{oid}.pdf", mime="application/pdf")
                     if c2.button("✅ Duyệt -> Thiết Kế", key=f"app_{oid}"):
                         update_order_status(oid, "Thiết kế")
                         st.rerun()
@@ -344,7 +349,7 @@ def main():
                 with st.expander(f"🚚 {oid} | {cname}"):
                     c1, c2 = st.columns(2)
                     pdf_gh = create_pdf(o, "PHIẾU GIAO HÀNG")
-                    if pdf_gh: c1.download_button("🖨️ In Phiếu Giao", pdf_gh, f"GH_{oid}.pdf")
+                    if pdf_gh: c1.download_button("🖨️ In Phiếu Giao", pdf_gh, f"GH_{oid}.pdf", mime="application/pdf")
                     if c2.button("✅ Giao Xong -> Công Nợ", key=f"del_{oid}"):
                         update_order_status(oid, "Công nợ")
                         st.rerun()
