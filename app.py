@@ -15,7 +15,7 @@ FONT_PATH = 'Arial.ttf'
 # [1] DÁN LINK GOOGLE SHEET CỦA BẠN VÀO DƯỚI ĐÂY:
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit" 
 
-# [2] THÔNG TIN ĐĂNG NHẬP (Giữ nguyên Dictionary này)
+# [2] THÔNG TIN ĐĂNG NHẬP (GIỮ NGUYÊN - CODE SẼ TỰ SỬA LỖI \n)
 CREDENTIALS_DICT = {
     "type": "service_account",
     "project_id": "quanlyinan",
@@ -45,37 +45,41 @@ def read_money(amount):
     except:
         return "..................... đồng."
 
-# --- KẾT NỐI GOOGLE SHEETS (DÙNG GSPREAD TRỰC TIẾP - BAO KHÔNG LỖI) ---
+# --- KẾT NỐI GOOGLE SHEETS (DÙNG GSPREAD + AUTO FIX KEY) ---
 @st.cache_resource
 def get_gspread_client():
     try:
+        # Tạo bản sao credentials để xử lý
+        creds_fixed = CREDENTIALS_DICT.copy()
+        
+        # [QUAN TRỌNG] Tự động sửa lỗi xuống dòng trong Private Key
+        # Nếu Python hiểu lầm \n là 2 ký tự, lệnh này sẽ sửa lại thành xuống dòng thật
+        if "\\n" in creds_fixed["private_key"]:
+            creds_fixed["private_key"] = creds_fixed["private_key"].replace("\\n", "\n")
+            
         scope = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
-        creds = Credentials.from_service_account_info(CREDENTIALS_DICT, scopes=scope)
+        
+        creds = Credentials.from_service_account_info(creds_fixed, scopes=scope)
         client = gspread.authorize(creds)
         return client
     except Exception as e:
-        st.error(f"Lỗi xác thực Google: {e}")
+        st.error(f"Lỗi xác thực Google (Vui lòng kiểm tra lại Key): {e}")
         return None
 
 def load_db():
     client = get_gspread_client()
     if not client: return []
     try:
-        # Mở file bằng URL
         sh = client.open_by_url(SHEET_URL)
         worksheet = sh.worksheet("Orders")
-        
-        # Lấy tất cả dữ liệu
         all_records = worksheet.get_all_records()
         
-        # Parse JSON
         data = []
         for item in all_records:
             try:
-                # Gspread trả về dict, ta chỉ cần parse các field JSON string
                 if isinstance(item.get('customer'), str) and item['customer']:
                     item['customer'] = json.loads(item['customer'])
                 if isinstance(item.get('items'), str) and item['items']:
@@ -87,10 +91,9 @@ def load_db():
                 continue
         return data
     except gspread.WorksheetNotFound:
-        # Nếu chưa có sheet Orders, tạo mới (tuỳ chọn)
         return []
     except Exception as e:
-        st.error(f"Lỗi tải đơn hàng: {e}")
+        st.error(f"Lỗi tải dữ liệu: {e}")
         return []
 
 def save_db(data):
@@ -107,7 +110,6 @@ def save_db(data):
             worksheet.clear()
             return
 
-        # Chuẩn bị dữ liệu để lưu
         data_to_save = []
         for item in data:
             clean_item = item.copy()
@@ -117,10 +119,7 @@ def save_db(data):
             data_to_save.append(clean_item)
         
         df = pd.DataFrame(data_to_save)
-        
-        # Ghi dữ liệu: Xóa cũ -> Ghi mới (Gồm cả Header)
         worksheet.clear()
-        # set_with_dataframe của gspread yêu cầu list of lists
         worksheet.update([df.columns.values.tolist()] + df.values.tolist())
         st.cache_data.clear()
         
@@ -134,8 +133,7 @@ def load_cash():
         sh = client.open_by_url(SHEET_URL)
         worksheet = sh.worksheet("Cashbook")
         data = worksheet.get_all_records()
-        if not data:
-            return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
+        if not data: return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
         return pd.DataFrame(data)
     except:
         return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
