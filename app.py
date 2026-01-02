@@ -173,6 +173,9 @@ def add_new_order(order_data):
     except: return False
 
 def save_cash_log(date, type_, amount, method, note):
+    """
+    Cấu trúc: Date | Content | Amount | TM/CK | Note
+    """
     client = get_gspread_client()
     if not client: return
     try:
@@ -629,39 +632,32 @@ def main():
         with tabs[4]: render_tab_content("Công nợ", None, "")
 
         with tabs[5]: # Hoàn thành
-            # --- CẬP NHẬT TAB HOÀN THÀNH: SỬ DỤNG CHUNG GIAO DIỆN XỬ LÝ (Để có nút Chi Hoa Hồng) ---
+            # SỬ DỤNG CHUNG GIAO DIỆN XỬ LÝ (Để có nút Chi Hoa Hồng)
             render_tab_content("Hoàn thành", None, "")
 
-    # --- TAB 3: TÀI CHÍNH (SỔ QUỸ CHỈ TIỀN MẶT - TM) ---
+    # --- TAB 3: TÀI CHÍNH (CHỈ HIỂN THỊ TIỀN MẶT - TM) ---
     elif menu == "3. Sổ Quỹ & Báo Cáo":
         st.title("📊 Sổ Quỹ Tiền Mặt")
         
         # Load dữ liệu
         df = pd.DataFrame(fetch_cashbook())
         
-        # Xử lý nếu file trống hoặc thiếu cột
         if df.empty:
              df = pd.DataFrame(columns=["Date", "Content", "Amount", "TM/CK", "Note"])
         
-        # Chuẩn hóa tên cột cũ nếu có
         if 'date' in df.columns: 
             df.rename(columns={'date': 'Date', 'type': 'Content', 'amount': 'Amount', 'desc': 'Note'}, inplace=True)
         
-        # Đảm bảo đủ cột
         for col in ["Date", "Content", "Amount", "TM/CK", "Note"]:
-            if col not in df.columns: df[col] = "" # Nếu thiếu thì điền rỗng
+            if col not in df.columns: df[col] = "" 
             
-        # Đảm bảo cột TM/CK có giá trị mặc định là TM nếu trống (để tránh lỗi lọc)
         df['TM/CK'] = df['TM/CK'].replace("", "TM").fillna("TM")
-
-        # Chuyển đổi số liệu
         df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
 
         # --- LỌC CHỈ LẤY GIAO DỊCH TIỀN MẶT (TM) ---
         df_tm = df[df['TM/CK'] == 'TM'].copy()
 
         if not df_tm.empty:
-            # Tính toán trên dữ liệu TM
             total_thu = df_tm[df_tm['Content'] == 'Thu']['Amount'].sum()
             total_chi = df_tm[df_tm['Content'] == 'Chi']['Amount'].sum()
             
@@ -671,27 +667,27 @@ def main():
             c3.metric("Tồn Quỹ Tiền Mặt", format_currency(total_thu - total_chi))
             st.divider()
             
-            # Hiển thị bảng
-            df_display = df_tm[['Date', 'Content', 'Amount', 'Note']].copy()
-            df_display['Amount'] = df_display['Amount'].apply(format_currency)
-            df_display.columns = ["Ngày tháng", "Loại", "Số tiền", "Nội dung/Ghi chú"]
+            df_tm['Thu'] = df_tm.apply(lambda x: x['Amount'] if x['Content'] == 'Thu' else 0, axis=1)
+            df_tm['Chi'] = df_tm.apply(lambda x: x['Amount'] if x['Content'] == 'Chi' else 0, axis=1)
+            
+            df_display = df_tm[['Date', 'Thu', 'Chi', 'Note']].copy()
+            df_display['Thu'] = df_display['Thu'].apply(lambda x: format_currency(x) if x > 0 else "")
+            df_display['Chi'] = df_display['Chi'].apply(lambda x: format_currency(x) if x > 0 else "")
+            df_display.columns = ["Ngày tháng", "Thu", "Chi", "Nội dung/Ghi chú"]
             
             st.dataframe(df_display, use_container_width=True, hide_index=True)
         else:
             st.info("Chưa có giao dịch Tiền mặt nào.")
-            # Hiển thị số 0 cho đẹp
             c1, c2, c3 = st.columns(3)
             c1.metric("Tổng Thu (TM)", "0")
             c2.metric("Tổng Chi (TM)", "0")
             c3.metric("Tồn Quỹ Tiền Mặt", "0")
 
-        # Form nhập liệu (Chỉ lưu TM vì đây là Sổ Tiền Mặt)
         st.write("---")
         st.subheader("📝 Ghi Sổ Tiền Mặt")
         with st.form("cash_entry"):
             c1, c2 = st.columns(2)
             type_option = c1.radio("Loại", ["Thu", "Chi"], horizontal=True)
-            # Mặc định là TM và ẩn đi hoặc chỉ hiện text thông báo
             st.caption("Hình thức: Tiền Mặt (TM)")
             
             d = c2.date_input("Ngày", value=datetime.now())
@@ -702,7 +698,6 @@ def main():
             
             if st.form_submit_button("💾 Lưu Sổ Quỹ"):
                 if amount > 0:
-                    # Luôn lưu là "TM"
                     save_cash_log(d, type_option, amount, "TM", note)
                     st.success("Đã lưu vào sổ quỹ tiền mặt!")
                     time.sleep(1)
