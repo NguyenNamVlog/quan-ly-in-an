@@ -280,3 +280,130 @@ def main():
             st.metric("TỔNG TIỀN", format_currency(total_val))
             
             c_del, c_save = st.columns(2)
+            if c_del.button("🗑️ Xóa giỏ hàng"):
+                st.session_state.cart = []
+                st.rerun()
+            
+            # Nút Lưu Báo Giá (Ngoài form -> OK)
+            if c_save.button("💾 LƯU BÁO GIÁ", type="primary"):
+                if not name:
+                    st.error("Chưa nhập tên khách hàng!")
+                else:
+                    new_order = {
+                        "order_id": gen_id(), 
+                        "date": datetime.now().strftime("%Y-%m-%d"),
+                        "status": "Báo giá", "payment_status": "Chưa TT",
+                        "customer": {"name": name, "phone": phone, "address": addr},
+                        "items": st.session_state.cart,
+                        "financial": {"total": total_val, "paid": 0, "debt": total_val, "staff": staff}
+                    }
+                    if add_new_order(new_order):
+                        st.session_state.last_order = new_order
+                        st.session_state.cart = []
+                        st.rerun()
+
+        # 4. Hiển thị nút tải PDF sau khi lưu
+        if st.session_state.last_order:
+            oid = st.session_state.last_order['order_id']
+            st.success(f"✅ Đã tạo đơn: {oid}")
+            pdf_bytes = create_pdf(st.session_state.last_order, "BÁO GIÁ")
+            
+            col_p, col_n = st.columns(2)
+            col_p.download_button("🖨️ Tải PDF Báo Giá", pdf_bytes, f"BG_{oid}.pdf", "application/pdf", type="primary")
+            if col_n.button("Tạo đơn mới"):
+                st.session_state.last_order = None
+                st.rerun()
+
+    # --- TAB 2: PIPELINE ---
+    elif menu == "2. Quản Lý Đơn Hàng (Pipeline)":
+        st.title("🏭 Quy Trình Sản Xuất")
+        all_orders = fetch_all_orders()
+        tabs = st.tabs(["1️⃣ Báo Giá", "2️⃣ Thiết Kế", "3️⃣ Sản Xuất", "4️⃣ Giao Hàng", "5️⃣ Công Nợ", "✅ Hoàn Thành"])
+        
+        def render_tab_content(status_filter, next_status, btn_text, pdf_type=None):
+            orders = [o for o in all_orders if o.get('status') == status_filter]
+            if not orders: st.info("Trống.")
+            for o in orders:
+                oid = o.get('order_id')
+                cname = o.get('customer', {}).get('name')
+                total = o.get('financial', {}).get('total', 0)
+                
+                with st.expander(f"📄 {oid} | {cname} | {format_currency(total)}"):
+                    c1, c2 = st.columns(2)
+                    if pdf_type:
+                        pdf = create_pdf(o, pdf_type)
+                        c1.download_button(f"🖨️ In {pdf_type}", pdf, f"{oid}.pdf", "application/pdf")
+                    
+                    if next_status:
+                        if c2.button(btn_text, key=f"btn_{oid}"):
+                            update_order_status(oid, next_status)
+                            st.rerun()
+
+        with tabs[0]: render_tab_content("Báo giá", "Thiết kế", "✅ Duyệt -> Thiết Kế", "BÁO GIÁ")
+        with tabs[1]: render_tab_content("Thiết kế", "Sản xuất", "✅ Duyệt TK -> Sản Xuất")
+        with tabs[2]: render_tab_content("Sản xuất", "Giao hàng", "✅ Xong -> Giao Hàng")
+        with tabs[3]: render_tab_content("Giao hàng", "Công nợ", "✅ Giao Xong -> Công Nợ", "PHIẾU GIAO HÀNG")
+        
+        with tabs[4]: # Công nợ
+            orders = [o for o in all_orders if o.get('status') == 'Công nợ']
+            if not orders: st.info("Hết nợ.")
+            for o in orders:
+                oid = o.get('order_id')
+                fin = o.get('financial', {})
+                debt = float(fin.get('total', 0)) - float(fin.get('paid', 0))
+                with st.expander(f"💰 {oid} | Nợ: {format_currency(debt)}"):
+                    c1, c2 = st.columns(2)
+                    pay = c1.number_input("Thu:", 0.0, float(debt), float(debt), key=f"p_{oid}")
+                    if c2.button("Thu Tiền", key=f"pay_{oid}"):
+                        new_st = "Hoàn thành" if (debt - pay) <= 0 else "Công nợ"
+                        pay_st = "Đã TT" if (debt - pay) <= 0 else "Cọc"
+                        update_order_status(oid, new_st, pay_st, pay)
+                        save_cash_log(datetime.now().strftime("%Y-%m-%d"), "Thu", pay, f"Thu {oid}")
+                        st.success("Xong!")
+                        time.sleep(1)
+                        st.rerun()
+
+        with tabs[5]: # Hoàn thành
+            orders = [o for o in all_orders if o.get('status') == 'Hoàn thành']
+            if orders:
+                df = pd.DataFrame([{"Mã": x['order_id'], "Khách": x['customer']['name'], "Tổng": format_currency(x['financial']['total'])} for x in orders])
+                st.dataframe(df, use_container_width=True)
+
+    # --- TAB 3: TÀI CHÍNH ---
+    elif menu == "3. Sổ Quỹ & Báo Cáo":
+        st.title("📊 Tài Chính")
+        tab1, tab2 = st.tabs(["Sổ Quỹ", "Báo Cáo"])
+        
+        with tab1:
+            df = pd.DataFrame(fetch_cashbook())
+            if not df.empty:
+                df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
+                thu = df[df['type'] == 'Thu']['amount'].sum()
+                chi = df[df['type'] == 'Chi']['amount'].sum()
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Thu", format_currency(thu))
+                c2.metric("Chi", format_currency(chi))
+                c3.metric("Tồn", format_currency(thu - chi))
+                st.divider()
+            
+            with st.form("expense"):
+                c1, c2, c3 = st.columns(3)
+                d = c1.date_input("Ngày")
+                a = c2.number_input("Chi phí", 0, step=10000)
+                desc = c3.text_input("Nội dung")
+                if st.form_submit_button("Lưu Chi"):
+                    save_cash_log(d, "Chi", a, desc)
+                    st.rerun()
+            if not df.empty: st.dataframe(df, use_container_width=True)
+
+        with tab2:
+            orders = fetch_all_orders()
+            if orders:
+                data = [{"Status": o.get('status'), "Staff": o.get('financial', {}).get('staff'), "Total": o.get('financial', {}).get('total', 0)} for o in orders]
+                df = pd.DataFrame(data)
+                if not df.empty:
+                    st.bar_chart(df['Status'].value_counts())
+                    st.bar_chart(df.groupby("Staff")['Total'].sum())
+
+if __name__ == "__main__":
+    main()
