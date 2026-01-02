@@ -1,11 +1,9 @@
 import streamlit as st
 import pandas as pd
 import json
-import os
 from datetime import datetime
 from fpdf import FPDF
 from docxtpl import DocxTemplate
-import plotly.express as px
 from num2words import num2words
 from streamlit_gsheets import GSheetsConnection
 
@@ -16,12 +14,9 @@ FONT_PATH = 'Arial.ttf'
 # [1] DÁN LINK GOOGLE SHEET CỦA BẠN VÀO DƯỚI ĐÂY:
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit" 
 
-# [2] DÁN TOÀN BỘ NỘI DUNG TRONG FILE JSON KEY VÀO GIỮA 3 DẤU NGOẶC KÉP DƯỚI ĐÂY:
-# (Cách này giúp Python tự đọc đúng định dạng mà không cần chỉnh sửa gì cả)
-CREDENTIALS_JSON_STRING = """
-{
-[connections.gsheets]
-spreadsheet = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit" # Link file Google Sheet của bạn
+# [2] THÔNG TIN ĐĂNG NHẬP (Đã được chuyển sang dạng Python Dict để tránh lỗi JSON)
+# Tôi đã điền sẵn thông tin từ file bạn gửi, bạn KHÔNG CẦN CHỈNH SỬA gì ở khối này nữa.
+CREDENTIALS_DICT = {
 type = "service_account"
 project_id: "quanlyinan",
 private_key_id: "becc31a465356195dbb8352429f10ec4a76a3dad",
@@ -34,7 +29,6 @@ auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
 client_x509_cert_url: "https://www.googleapis.com/robot/v1/metadata/x509/quanlyinan%40quanlyinan.iam.gserviceaccount.com",
 universe_domain: "googleapis.com"
 }
-"""
 
 # --- HÀM TIỆN ÍCH ---
 def format_currency(value):
@@ -51,14 +45,11 @@ def read_money(amount):
     except:
         return "..................... đồng."
 
-# --- QUẢN LÝ DATABASE (KẾT NỐI TRỰC TIẾP TỪ JSON STRING) ---
+# --- QUẢN LÝ DATABASE (KẾT NỐI TRỰC TIẾP) ---
 def get_db_connection():
     try:
-        # Load thông tin từ chuỗi JSON ở trên, bỏ qua Secrets
-        creds_dict = json.loads(CREDENTIALS_JSON_STRING)
-        
-        # Tạo kết nối bằng dict đã load
-        conn = st.connection("gsheets", type=GSheetsConnection, **creds_dict)
+        # Sử dụng trực tiếp Dict đã khai báo ở trên, không cần json.loads nữa
+        conn = st.connection("gsheets", type=GSheetsConnection, **CREDENTIALS_DICT)
         return conn
     except Exception as e:
         st.error(f"Lỗi cấu hình Key: {e}")
