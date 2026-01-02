@@ -13,8 +13,28 @@ from streamlit_gsheets import GSheetsConnection
 TEMPLATE_CONTRACT = 'Hop dong .docx' 
 FONT_PATH = 'Arial.ttf'
 
-# !!! QUAN TRỌNG: DÁN LINK GOOGLE SHEET CỦA BẠN VÀO DƯỚI ĐÂY !!!
-SHEET_URL = "https://docs.google.com/spreadsheets/d/XXXXXXXXXXXXXXXXXXXX/edit" 
+# [1] DÁN LINK GOOGLE SHEET CỦA BẠN VÀO DƯỚI ĐÂY:
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit" 
+
+# [2] DÁN TOÀN BỘ NỘI DUNG TRONG FILE JSON KEY VÀO GIỮA 3 DẤU NGOẶC KÉP DƯỚI ĐÂY:
+# (Cách này giúp Python tự đọc đúng định dạng mà không cần chỉnh sửa gì cả)
+CREDENTIALS_JSON_STRING = """
+{
+[connections.gsheets]
+spreadsheet = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit" # Link file Google Sheet của bạn
+type = "service_account"
+project_id: "quanlyinan",
+private_key_id: "becc31a465356195dbb8352429f10ec4a76a3dad",
+private_key: "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCRixepQSVgPNAl\nkGDUK4pLknV2ayZBPj2hSir4SE2Q0rm1D1fOBJAejCMvV23Crz3H+w9w7+ST08ci\nVQuVpm6Ous4fvZNtU9bzvh4soHWDUib7UqBIhgGs8Zjocs0tf555JxueTEp5Gppv\n8ycfxJ6HjXFUJyiz2WFOwgZXwcDOgiUxD/eKQdxfzDQI4MyvKj+iKA1sVJd6AALH\nkdwybJmMndWCBS/TcSn8ZdSEgn5JNrQnRXBtQVyUZ+uEz3iWupEHPlSlTsmIDyvq\nS5c+/RWLkrL22L2A8BIiQpVEGZc/KBgNOiag2PMX8yTixIbYTMpV6MbXUFYQAh/b\nzJu1ebOZAgMBAAECggEAKyJc9dWP3TDIw4lBmT/6MaGLXHgvE0D+BPI1P/Y1vskl\nLqsIa89gYx1HRD2WEw/asI0Qq3j9dm5aYytvTn/P3k8wzaliqxEg8IYU7Ub07OGJ\nGg0H4daNYpMLrUBw3J4o+mEDx2t22uNuh+U5YCnmjef2gWlFn9+5/hx0wsdyfAEV\n2HWP5dPpuWmCchkmvpA/+d8KO5laZ2u3bjYOzFnJqnu7GqWtesngSL15tjQZ5RnG\nlrJtkqy2N0YzlJB9CaQfsXvZ4hhuP6jjwG4SRXgcfFdWcErbC+M7HSaPAbnxpIfj\nqGLDd+h+Lk+QUg2yC9jXzT7+ar+x3b/MirGm9LCUzQKBgQDBPESsPYy+Z85bXKgX\n4YLYZtUnk0OHMSNyWeVeBeSYYdvuEbejo+1QZC0G5yJnCcV7gSMopnHNa08g4JBl\ndXbVRePMVMo4eVcfZ3fbtrGvW8GrIe2rVZpQ3bvDsj8OUXxNyOCyXQywFGCfuDWa\nS+6VzIN2nrKauxzX/w7R5uhCtwKBgQDA0Sz7QDcRKpnFRs4HAycSvqbQrAkCrCI1\n6EvhqpD3h1ftVqTTVvIWsKym0Pp/A2W7cYtjqic1lnYH09Ag7Y5r5r0kbA94ACqG\n8Cw6ixjM//zbmon+dHtRkr4YMu4dqUjvjN/yhdTap8MYIY5UYAtVGprywA4PFhU9\nZAH5b5IsLwKBgQCKw9Pw+LZUmckX1N8lXx2Od7JEnD1XHVN+L85GCedSApxkRzbf\n/b1TCM1I8rzCz8KQYXk1HOoGgTQuwPUQ1xzCJVFkD9O0YHbPJ4dsMbNB4ZufYFsD\nuhJ6VfEbpKohhyTD2yh5Ddcpr0iAClH7/uFTk60ohuhts0cQWapz0+Ug2wKBgQCD\npc36deujMtzujttYelSRPc6TpwI36uMov0Qf/d8gwi3MhF3hVfnQeCxJcWG2mtE4\n29t53tEKi4Jm8b2m3cth7JazaXxeSG7A1va7ugDi5tzz613QeCNCnNhhmVRuuAhu\nVlcJNUsRR32y2iZdgX37S0EEAREYR9GUqtWWQxEgTQKBgECULpGVDkRGSGLrCPPG\nep0iMdgunHhHc4Vdk01Nq0y/JGhCYAw1R910nm7jXnJM8C06U7srXWB45ohOC4w7\nhq1C9FMmWriEKSQyoQw1C4H9UePjezwn+MTHIRbQYlUMJQqIjQGMRfr4i+o8v8je\ncZ6vlyaYkVlaKQuZY25/HJA4\n-----END PRIVATE KEY-----\n",
+client_email: "quanlyinan@quanlyinan.iam.gserviceaccount.com",
+client_id: "105384981732403020965",
+auth_uri: "https://accounts.google.com/o/oauth2/auth",
+token_uri: "https://oauth2.googleapis.com/token",
+auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
+client_x509_cert_url: "https://www.googleapis.com/robot/v1/metadata/x509/quanlyinan%40quanlyinan.iam.gserviceaccount.com",
+universe_domain: "googleapis.com"
+}
+"""
 
 # --- HÀM TIỆN ÍCH ---
 def format_currency(value):
@@ -31,37 +51,22 @@ def read_money(amount):
     except:
         return "..................... đồng."
 
-# --- QUẢN LÝ DATABASE (FIX LỖI JWT MẠNH MẼ) ---
+# --- QUẢN LÝ DATABASE (KẾT NỐI TRỰC TIẾP TỪ JSON STRING) ---
 def get_db_connection():
-    """
-    Hàm kết nối thông minh: Tự động sửa lỗi private_key trong secrets
-    bất kể người dùng copy/paste kiểu gì.
-    """
     try:
-        # 1. Lấy cấu hình từ secrets ra dưới dạng Dictionary
-        # st.secrets trả về object đặc biệt, cần ép kiểu về dict để sửa
-        secrets_conf = dict(st.secrets["connections"]["gsheets"])
+        # Load thông tin từ chuỗi JSON ở trên, bỏ qua Secrets
+        creds_dict = json.loads(CREDENTIALS_JSON_STRING)
         
-        # 2. Xử lý sửa lỗi Private Key
-        if "private_key" in secrets_conf:
-            pk = secrets_conf["private_key"]
-            # Thay thế ký tự \n (do copy từ JSON) thành xuống dòng thật
-            pk_fixed = pk.replace("\\n", "\n") 
-            secrets_conf["private_key"] = pk_fixed
-
-        # 3. Khởi tạo kết nối với cấu hình đã sửa
-        # Dùng **secrets_conf để truyền toàn bộ thông tin đã fix vào
-        conn = st.connection("gsheets", type=GSheetsConnection, **secrets_conf)
+        # Tạo kết nối bằng dict đã load
+        conn = st.connection("gsheets", type=GSheetsConnection, **creds_dict)
         return conn
-
     except Exception as e:
-        # Nếu vẫn lỗi, thử kết nối mặc định (hy vọng secrets đúng)
-        return st.connection("gsheets", type=GSheetsConnection)
+        st.error(f"Lỗi cấu hình Key: {e}")
+        return None
 
 def load_db():
     try:
         conn = get_db_connection()
-        # Ép buộc dùng URL này
         df = conn.read(spreadsheet=SHEET_URL, worksheet="Orders", ttl=0)
         
         if df.empty: return []
@@ -77,7 +82,6 @@ def load_db():
             data.append(item)
         return data
     except Exception as e:
-        # st.error(f"Lỗi load DB: {e}") 
         return []
 
 def save_db(data):
