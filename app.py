@@ -14,9 +14,10 @@ FONT_PATH = 'Arial.ttf'
 # [1] DÁN LINK GOOGLE SHEET CỦA BẠN VÀO DƯỚI ĐÂY:
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit" 
 
-# [2] THÔNG TIN ĐĂNG NHẬP (Đã được chuyển sang dạng Python Dict để tránh lỗi JSON)
-# Tôi đã điền sẵn thông tin từ file bạn gửi, bạn KHÔNG CẦN CHỈNH SỬA gì ở khối này nữa.
+# [2] THÔNG TIN ĐĂNG NHẬP (ĐÃ SỬA CÚ PHÁP CHUẨN PYTHON)
+# Lưu ý: Trong Python Dict phải dùng dấu hai chấm (:) và dấu phẩy (,) cuối dòng
 CREDENTIALS_DICT = {
+spreadsheet = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit" # Link file Google Sheet của bạn
 type = "service_account"
 project_id: "quanlyinan",
 private_key_id: "becc31a465356195dbb8352429f10ec4a76a3dad",
@@ -48,7 +49,7 @@ def read_money(amount):
 # --- QUẢN LÝ DATABASE (KẾT NỐI TRỰC TIẾP) ---
 def get_db_connection():
     try:
-        # Sử dụng trực tiếp Dict đã khai báo ở trên, không cần json.loads nữa
+        # Sử dụng trực tiếp Dict đã khai báo ở trên
         conn = st.connection("gsheets", type=GSheetsConnection, **CREDENTIALS_DICT)
         return conn
     except Exception as e:
