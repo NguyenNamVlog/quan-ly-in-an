@@ -4,6 +4,7 @@ import json
 import time
 import os
 import requests
+import unicodedata
 from datetime import datetime
 from fpdf import FPDF
 from docxtpl import DocxTemplate
@@ -15,21 +16,9 @@ from google.oauth2.service_account import Credentials
 # --- CẤU HÌNH ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit"
 TEMPLATE_CONTRACT = 'Hop dong .docx' 
-FONT_FILENAME = 'ARIAL.ttf'
+FONT_FILENAME = 'Roboto-Regular.ttf'
 
-# --- HÀM HỖ TRỢ: TẢI FONT (BẮT BUỘC CHO FPDF2) ---
-def check_and_download_font():
-    """Tải font Roboto nếu chưa có. FPDF2 bắt buộc phải có font TTF để in tiếng Việt."""
-    if not os.path.exists(FONT_FILENAME):
-        try:
-            url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf"
-            response = requests.get(url)
-            with open(FONT_FILENAME, 'wb') as f:
-                f.write(response.content)
-        except Exception as e:
-            st.error(f"Lỗi tải font: {e}")
-
-# --- HÀM HỖ TRỢ TIỀN TỆ ---
+# --- HÀM HỖ TRỢ ---
 def format_currency(value):
     if value is None: return "0"
     try: return "{:,.0f}".format(float(value))
@@ -38,6 +27,23 @@ def format_currency(value):
 def read_money_vietnamese(amount):
     try: return num2words(amount, lang='vi').capitalize() + " đồng chẵn."
     except: return "..................... đồng."
+
+# --- TẢI FONT (XỬ LÝ LỖI FILE HỎNG) ---
+def check_and_download_font():
+    """Tải font và kiểm tra xem file có hợp lệ không"""
+    url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf"
+    
+    # Nếu file tồn tại nhưng kích thước quá nhỏ (lỗi tải), xóa đi
+    if os.path.exists(FONT_FILENAME) and os.path.getsize(FONT_FILENAME) < 1000:
+        os.remove(FONT_FILENAME)
+        
+    if not os.path.exists(FONT_FILENAME):
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                with open(FONT_FILENAME, 'wb') as f:
+                    f.write(response.content)
+        except: pass
 
 # --- KẾT NỐI GOOGLE SHEETS ---
 @st.cache_resource
@@ -48,7 +54,6 @@ def get_gspread_client():
             return None
         
         creds_dict = dict(st.secrets["service_account"])
-        # Fix lỗi xuống dòng trong Private Key
         if "private_key" in creds_dict:
             creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         
@@ -162,72 +167,84 @@ def gen_id():
         if str(o.get('order_id', '')).endswith(year): count += 1
     return f"{count+1:03d}/DH.{year}"
 
-# --- PDF GENERATOR (CHUẨN FPDF2 - TIẾNG VIỆT) ---
+# --- PDF GENERATOR (FIX LỖI CRASH FONT TUYỆT ĐỐI) ---
 class PDFGen(FPDF):
     def header(self):
-        # Đảm bảo font đã tải
-        check_and_download_font()
-        # Đăng ký font Roboto (quan trọng)
-        # Trong fpdf2, ta dùng add_font(family, style, fname)
-        try:
-            self.add_font('Roboto', '', FONT_FILENAME)
-            self.set_font('Roboto', '', 14)
-            self.cell(0, 10, 'CÔNG TY IN ẤN AN LỘC PHÁT', new_x="LMARGIN", new_y="NEXT", align='C')
-            self.ln(5)
-        except Exception as e:
-            # Nếu lỗi font, fallback về Helvetica (chấp nhận lỗi tiếng Việt để không sập)
-            self.set_font('Helvetica', '', 14)
-            self.cell(0, 10, 'CONG TY IN AN AN LOC PHAT', new_x="LMARGIN", new_y="NEXT", align='C')
-            self.ln(5)
+        # Tránh set font ngay tại đây nếu font chưa load được
+        pass
 
 def create_pdf(order, title):
-    # Khởi tạo PDF
     pdf = PDFGen()
     pdf.add_page()
     
-    # Check lại font lần nữa để chắc chắn
+    # 1. Tải Font
     check_and_download_font()
     
-    # Cài đặt font chính
+    # 2. Cài đặt font & Chế độ Safe Mode
+    SAFE_MODE = False
     try:
+        # Thử load font Roboto
         pdf.add_font('Roboto', '', FONT_FILENAME)
         pdf.set_font('Roboto', '', 11)
-        has_font = True
     except:
+        # Nếu lỗi (do file font hỏng/không tải được), dùng Helvetica và Bật Safe Mode
         pdf.set_font('Helvetica', '', 11)
-        has_font = False
+        SAFE_MODE = True
 
-    # Hàm wrapper để xử lý text: Nếu không có font thì bỏ dấu
+    # 3. Hàm xử lý text bất chấp mọi loại lỗi font
     def txt(text):
         if not text: return ""
         text = str(text)
-        if has_font: return text
-        # Fallback: bỏ dấu nếu không load được font (tránh crash)
-        import unicodedata
-        return "".join([c for c in unicodedata.normalize('NFKD', text) if not unicodedata.combining(c)])
+        
+        if not SAFE_MODE:
+            return text
+        
+        # --- LOGIC SAFE MODE (BỎ DẤU ĐỂ KHÔNG SẬP APP) ---
+        # Thay thế các ký tự đặc biệt tiếng Việt thủ công
+        replacements = {
+            'đ': 'd', 'Đ': 'D',
+            'ă': 'a', 'â': 'a', 'á': 'a', 'à': 'a', 'ả': 'a', 'ã': 'a', 'ạ': 'a',
+            'ê': 'e', 'é': 'e', 'è': 'e', 'ẻ': 'e', 'ẽ': 'e', 'ẹ': 'e',
+            'í': 'i', 'ì': 'i', 'ỉ': 'i', 'ĩ': 'i', 'ị': 'i',
+            'ô': 'o', 'ơ': 'o', 'ó': 'o', 'ò': 'o', 'ỏ': 'o', 'õ': 'o', 'ọ': 'o',
+            'ư': 'u', 'ú': 'u', 'ù': 'u', 'ủ': 'u', 'ũ': 'u', 'ụ': 'u',
+            'ý': 'y', 'ỳ': 'y', 'ỷ': 'y', 'ỹ': 'y', 'ỵ': 'y'
+        }
+        # Bước 1: Thay thế thủ công
+        for k, v in replacements.items():
+            text = text.replace(k, v).replace(k.upper(), v.upper())
+            
+        # Bước 2: Chuẩn hóa unicode và loại bỏ các dấu còn sót
+        text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
+        return text
 
     # --- NỘI DUNG PDF ---
     
+    # Header Công Ty
+    # Kiểm tra font riêng cho header
+    header_font = 'Roboto' if not SAFE_MODE else 'Helvetica'
+    pdf.set_font(header_font, '', 14)
+    pdf.cell(0, 10, txt('CÔNG TY IN ẤN AN LỘC PHÁT'), new_x="LMARGIN", new_y="NEXT", align='C')
+    pdf.ln(5)
+
     # Tiêu đề
     pdf.set_font_size(16)
     pdf.cell(0, 10, txt(title), new_x="LMARGIN", new_y="NEXT", align='C')
     
-    # Thông tin chung
+    # Thông tin đơn
     pdf.set_font_size(11)
     oid = order.get('order_id', '')
     odate = order.get('date', '')
     pdf.cell(0, 8, txt(f"Mã số: {oid} | Ngày: {odate}"), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.ln(5)
     
-    # Thông tin khách
     cust = order.get('customer', {})
     pdf.cell(0, 7, txt(f"Khách hàng: {cust.get('name', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 7, txt(f"Điện thoại: {cust.get('phone', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 7, txt(f"Địa chỉ: {cust.get('address', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(5)
     
-    # Bảng hàng hóa
-    # Header bảng
+    # Table Header
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(10, 8, "STT", border=1, align='C', fill=True)
     pdf.cell(90, 8, txt("Tên hàng / Quy cách"), border=1, align='C', fill=True)
@@ -243,7 +260,6 @@ def create_pdf(order, title):
         except: item_total = 0
         total += item_total
         
-        # In từng dòng
         pdf.cell(10, 8, str(i+1), border=1, align='C')
         pdf.cell(90, 8, txt(item.get('name', '')), border=1)
         pdf.cell(20, 8, txt(str(item.get('qty', 0))), border=1, align='C')
@@ -255,11 +271,16 @@ def create_pdf(order, title):
     pdf.cell(40, 8, format_currency(total), border=1, align='R', new_x="LMARGIN", new_y="NEXT")
     
     pdf.ln(5)
-    money_text = read_money_vietnamese(total)
-    pdf.multi_cell(0, 8, txt(f"Bằng chữ: {money_text}"))
     
-    # Trả về bytes cho Streamlit
-    return pdf.output()  # fpdf2 trả về bytearray mặc định, không cần bytes()
+    # Đọc tiền
+    if SAFE_MODE:
+        pdf.multi_cell(0, 8, txt(f"Tong cong: {format_currency(total)} VND"))
+    else:
+        try: money_text = read_money_vietnamese(total)
+        except: money_text = f"{format_currency(total)} đồng."
+        pdf.multi_cell(0, 8, txt(f"Bằng chữ: {money_text}"))
+    
+    return pdf.output()
 
 # --- GIAO DIỆN CHÍNH ---
 def main():
