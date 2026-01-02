@@ -47,9 +47,8 @@ def get_gspread_client():
         return gspread.authorize(creds)
     except: return None
 
-# --- USER MANAGEMENT (MỚI) ---
+# --- USER MANAGEMENT ---
 def init_users():
-    """Khởi tạo sheet Users nếu chưa có"""
     client = get_gspread_client()
     if not client: return
     try:
@@ -59,7 +58,6 @@ def init_users():
         except:
             ws = sh.add_worksheet("Users", 100, 3)
             ws.append_row(["username", "password", "role"])
-            # Tạo user mặc định
             default_users = [
                 ["Nam", "Emyeu0901", "admin"],
                 ["Duong", "Duong-", "staff"],
@@ -86,7 +84,7 @@ def change_password(username, new_pass):
         ws = sh.worksheet("Users")
         cell = ws.find(username)
         if cell:
-            ws.update_cell(cell.row, 2, new_pass) # Cột 2 là password
+            ws.update_cell(cell.row, 2, new_pass)
             return True
         return False
     except: return False
@@ -279,7 +277,7 @@ def create_pdf(order, title):
         text = str(text)
         return remove_accents(text) if SAFE_MODE else text
 
-    # --- HEADER ---
+    # --- 1. HEADER ---
     if os.path.exists(HEADER_IMAGE):
         try:
             pdf.image(HEADER_IMAGE, x=10, y=10, w=190)
@@ -295,7 +293,7 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt('Số tài khoản: 451557254 – Ngân hàng TMCP Việt Nam Thịnh Vượng - CN Đồng Nai'), 0, 1, 'C')
         pdf.ln(2)
 
-    # --- TITLE ---
+    # --- 2. TITLE ---
     pdf.set_font_size(16)
     pdf.cell(0, 8, txt(title), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.set_font_size(11)
@@ -315,7 +313,7 @@ def create_pdf(order, title):
     cust = order.get('customer', {})
     items = order.get('items', [])
     
-    # --- CUSTOMER INFO ---
+    # --- 3. CUSTOMER INFO ---
     pdf.cell(0, 6, txt(f"Mã số: {oid} | Ngày: {odate}"), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.ln(1)
     pdf.cell(0, 6, txt(f"Khách hàng: {cust.get('name', '')}"), new_x="LMARGIN", new_y="NEXT")
@@ -326,7 +324,7 @@ def create_pdf(order, title):
     pdf.multi_cell(0, 5, txt(intro_text))
     pdf.ln(2)
     
-    # --- TABLE ---
+    # --- 4. TABLE ---
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(10, 8, "STT", 1, 0, 'C', 1)
     pdf.cell(75, 8, txt("Tên hàng / Quy cách"), 1, 0, 'C', 1)
@@ -379,7 +377,7 @@ def create_pdf(order, title):
     pdf.multi_cell(0, 6, txt(f"Bằng chữ: {money_text}"))
     pdf.ln(3)
 
-    # --- SIGNATURE ---
+    # --- 5. SIGNATURE ---
     pdf.set_x(10)
     if is_delivery:
         pdf.cell(95, 5, txt("NGƯỜI NHẬN"), 0, 0, 'C')
@@ -389,7 +387,7 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt("NGƯỜI BÁO GIÁ"), 0, 1, 'R')
         pdf.ln(20)
 
-    # --- FOOTER ---
+    # --- 6. FOOTER ---
     pdf.ln(2)
     pdf.set_font_size(10)
     pdf.set_x(10)
@@ -414,7 +412,7 @@ def create_pdf(order, title):
     
     return bytes(pdf.output())
 
-# --- UI CHÍNH VÀ LOGIN ---
+# --- LOGIN PAGE ---
 def login_page():
     st.title("🔐 Đăng Nhập Hệ Thống")
     
@@ -436,7 +434,11 @@ def login_page():
             else:
                 st.error("Sai tên đăng nhập hoặc mật khẩu!")
 
+# --- MAIN APP ---
 def main_app():
+    # Kiểm tra quyền Admin ngay đầu hàm
+    is_admin = st.session_state.role == 'admin'
+
     # Sidebar User Info & Logout
     with st.sidebar:
         st.write(f"👤 **{st.session_state.user['username']}** ({st.session_state.role})")
@@ -474,7 +476,7 @@ def main_app():
         phone = c2.text_input("Số Điện Thoại", key="in_phone")
         addr = st.text_input("Địa Chỉ", key="in_addr")
         
-        # Tự động chọn nhân viên theo user đăng nhập nếu trùng tên
+        # Tự động chọn nhân viên theo user đăng nhập
         user_name = st.session_state.user['username']
         staff_options = ["Nam", "Dương", "Vạn", "Khác"]
         default_idx = 0
@@ -571,8 +573,6 @@ def main_app():
         all_orders = fetch_all_orders()
         tabs = st.tabs(["1️⃣ Báo Giá", "2️⃣ Thiết Kế", "3️⃣ Sản Xuất", "4️⃣ Giao Hàng", "5️⃣ Công Nợ", "✅ Hoàn Thành"])
         
-        is_admin = st.session_state.role == 'admin'
-
         def render_tab_content(status_filter, next_status, btn_text, pdf_type=None):
             current_orders = [o for o in all_orders if o.get('status') == status_filter]
             if not current_orders:
