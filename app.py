@@ -172,7 +172,11 @@ def add_new_order(order_data):
         return True
     except: return False
 
-def save_cash_log(date, type_, amount, desc, note=""):
+# --- CẬP NHẬT HÀM LƯU SỔ QUỸ THEO CẤU TRÚC MỚI ---
+def save_cash_log(date, type_, amount, method, note):
+    """
+    Cấu trúc: Date | Content | Amount | TM/CK | Note
+    """
     client = get_gspread_client()
     if not client: return
     try:
@@ -180,13 +184,12 @@ def save_cash_log(date, type_, amount, desc, note=""):
         try: ws = sh.worksheet("Cashbook")
         except: 
             ws = sh.add_worksheet("Cashbook", 1000, 10)
-            ws.append_row(["date", "type", "amount", "category", "desc", "note"])
+            ws.append_row(["Date", "Content", "Amount", "TM/CK", "Note"])
         
         if not ws.get_all_values():
-             ws.append_row(["date", "type", "amount", "category", "desc", "note"])
+             ws.append_row(["Date", "Content", "Amount", "TM/CK", "Note"])
 
-        category = "Thu tiền hàng" if type_=='Thu' else "Chi phí kinh doanh"
-        ws.append_row([str(date), type_, amount, category, desc, note])
+        ws.append_row([str(date), type_, amount, method, note])
         st.cache_data.clear()
     except: pass
 
@@ -360,7 +363,8 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt("- Báo giá này áp dụng trong vòng 30 ngày."), 0, 1)
         pdf.ln(2)
         pdf.set_x(10)
-        pdf.multi_cell(190, 5, txt("Rất mong nhận được sự hợp tác của Quý khách hàng! Trân trọng! "))
+        pdf.multi_cell(190, 5, txt("Rất mong nhận được sự hợp tác của Quý khách hàng"))
+        pdf.cell(0, 5, txt("Trân trọng!"), 0, 1)
     
     return bytes(pdf.output())
 
@@ -581,7 +585,7 @@ def main():
                             pay_stat_new = "Đã TT" if (debt - pay_val) <= 0 else "Cọc/Còn nợ"
                             if (debt - pay_val) <= 0 and status_filter == "Công nợ": new_st = "Hoàn thành" 
                             update_order_status(oid, new_st, pay_stat_new, pay_val)
-                            save_cash_log(datetime.now().strftime("%Y-%m-%d"), "Thu", pay_val, f"Thu tiền đơn {oid}")
+                            save_cash_log(datetime.now().strftime("%Y-%m-%d"), "Thu", pay_val, "TM", f"Thu tiền đơn {oid}") # Mặc định TM nếu thu ở đây
                             st.success("Đã thu tiền thành công!")
                             time.sleep(1)
                             st.rerun()
@@ -642,69 +646,59 @@ def main():
                     })
                 st.dataframe(pd.DataFrame(data), use_container_width=True)
 
-    # --- TAB 3: TÀI CHÍNH (SỔ QUỸ CẬP NHẬT) ---
+    # --- TAB 3: TÀI CHÍNH ---
     elif menu == "3. Sổ Quỹ & Báo Cáo":
         st.title("📊 Tài Chính")
         tab1, tab2 = st.tabs(["Sổ Quỹ", "Báo Cáo"])
         with tab1:
             df = pd.DataFrame(fetch_cashbook())
-            # Xử lý data để hiển thị đẹp
-            if not df.empty and 'amount' in df.columns and 'type' in df.columns:
-                df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
-                
-                # Tự động tạo cột type nếu thiếu hoặc sai (để tránh lỗi)
-                if 'type' not in df.columns: df['type'] = 'Thu'
+            
+            # Khởi tạo frame rỗng nếu chưa có dữ liệu để tránh lỗi
+            if df.empty:
+                df = pd.DataFrame(columns=["Date", "Content", "Amount", "TM/CK", "Note"])
+            
+            # Chuẩn hóa tên cột (đề phòng file cũ)
+            # Map old columns if needed
+            if 'date' in df.columns: df.rename(columns={'date': 'Date', 'type': 'Content', 'amount': 'Amount', 'desc': 'Note'}, inplace=True)
+            
+            # Đảm bảo có đủ cột
+            for col in ["Date", "Content", "Amount", "TM/CK", "Note"]:
+                if col not in df.columns: df[col] = ""
 
-                df['Thu'] = df.apply(lambda x: x['amount'] if x['type'] == 'Thu' else 0, axis=1)
-                df['Chi'] = df.apply(lambda x: x['amount'] if x['type'] == 'Chi' else 0, axis=1)
-                
-                total_thu = df['Thu'].sum()
-                total_chi = df['Chi'].sum()
-                
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Tổng Thu", format_currency(total_thu))
-                c2.metric("Tổng Chi", format_currency(total_chi))
-                c3.metric("Tồn Quỹ", format_currency(total_thu - total_chi))
-                st.divider()
-                
-                df['Thu'] = df['Thu'].apply(lambda x: format_currency(x) if x > 0 else "")
-                df['Chi'] = df['Chi'].apply(lambda x: format_currency(x) if x > 0 else "")
-                
-                # Đảm bảo cột note tồn tại
-                if 'note' not in df.columns: df['note'] = ""
-                
-                df_display = df[['date', 'Thu', 'Chi', 'desc', 'note']]
-                df_display.columns = ["Ngày tháng", "Thu", "Chi", "Nội dung", "Ghi chú"]
-                
-                st.dataframe(df_display, use_container_width=True, hide_index=True)
-            else:
-                # Nếu bảng trống, khởi tạo DataFrame rỗng với đúng cấu trúc để không lỗi
-                empty_df = pd.DataFrame(columns=["Ngày tháng", "Thu", "Chi", "Nội dung", "Ghi chú"])
-                st.info("Sổ quỹ trống.")
-                st.dataframe(empty_df, use_container_width=True, hide_index=True)
-                
-                # Hiển thị Metric 0 đồng
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Tổng Thu", "0")
-                c2.metric("Tổng Chi", "0")
-                c3.metric("Tồn Quỹ", "0")
-                st.divider()
+            # Xử lý số liệu
+            df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
+            
+            # Tính toán Metric
+            total_thu = df[df['Content'] == 'Thu']['Amount'].sum()
+            total_chi = df[df['Content'] == 'Chi']['Amount'].sum()
+            
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Tổng Thu", format_currency(total_thu))
+            c2.metric("Tổng Chi", format_currency(total_chi))
+            c3.metric("Tồn Quỹ", format_currency(total_thu - total_chi))
+            st.divider()
 
+            # Hiển thị Bảng
+            # Format lại cột Amount cho đẹp
+            df_display = df.copy()
+            df_display['Amount'] = df_display['Amount'].apply(format_currency)
+            st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+            # Form Nhập Liệu
             st.subheader("📝 Ghi Sổ Thu/Chi")
             with st.form("cash_entry"):
                 c1, c2 = st.columns(2)
                 type_option = c1.radio("Loại", ["Thu", "Chi"], horizontal=True)
+                method_option = c1.radio("Hình thức", ["TM", "CK"], horizontal=True)
                 d = c2.date_input("Ngày", value=datetime.now())
                 
                 c3, c4 = st.columns(2)
                 amount = c3.number_input("Số tiền", 0, step=10000)
-                desc = c4.text_input("Nội dung (Lý do)")
-                
-                note = st.text_input("Ghi chú thêm")
+                note = c4.text_input("Nội dung / Ghi chú")
                 
                 if st.form_submit_button("💾 Lưu Sổ Quỹ"):
                     if amount > 0:
-                        save_cash_log(d, type_option, amount, desc, note)
+                        save_cash_log(d, type_option, amount, method_option, note)
                         st.success("Đã lưu!")
                         time.sleep(1)
                         st.rerun()
