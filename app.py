@@ -359,8 +359,7 @@ def create_pdf(order, title):
         pdf.ln(3)
         pdf.set_x(10)
         pdf.multi_cell(190, 5, txt("Rất mong nhận được sự hợp tác của Quý khách hàng"))
-        pdf.cell(0, 5, txt("Trân trọng!"), 0, 1)
-    
+            
     return bytes(pdf.output())
 
 # --- MAIN APP ---
