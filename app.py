@@ -172,7 +172,8 @@ def add_new_order(order_data):
         return True
     except: return False
 
-def save_cash_log(date, type_, amount, desc):
+# --- CẬP NHẬT HÀM LƯU SỔ QUỸ (Thêm note) ---
+def save_cash_log(date, type_, amount, desc, note=""):
     client = get_gspread_client()
     if not client: return
     try:
@@ -180,8 +181,14 @@ def save_cash_log(date, type_, amount, desc):
         try: ws = sh.worksheet("Cashbook")
         except: 
             ws = sh.add_worksheet("Cashbook", 1000, 10)
-            ws.append_row(["date", "type", "amount", "category", "desc"])
-        ws.append_row([str(date), type_, amount, "Thu tiền hàng" if type_=='Thu' else "Chi phí", desc])
+            ws.append_row(["date", "type", "amount", "category", "desc", "note"])
+        
+        # Nếu sheet tồn tại nhưng rỗng, thêm header
+        if not ws.get_all_values():
+             ws.append_row(["date", "type", "amount", "category", "desc", "note"])
+
+        category = "Thu tiền hàng" if type_=='Thu' else "Chi phí kinh doanh"
+        ws.append_row([str(date), type_, amount, category, desc, note])
         st.cache_data.clear()
     except: pass
 
@@ -202,7 +209,7 @@ def gen_id():
         if str(o.get('order_id', '')).endswith(year): count += 1
     return f"{count+1:03d}/DH.{year}"
 
-# --- PDF GENERATOR (ĐÃ SỬA LỖI KHOẢNG TRẮNG) ---
+# --- PDF GENERATOR ---
 class PDFGen(FPDF):
     def header(self): pass
 
@@ -250,12 +257,12 @@ def create_pdf(order, title):
     
     if is_delivery:
         odate = datetime.now().strftime("%d/%m/%Y")
-        intro_text = "Công ty TNHH SX KD TM An Lộc Phát xin cám ơn sự quan tâm của Quý khách hàng đến sản phẩm và dịch vụ của chúng tôi.  Nay bàn giao các hàng hóa và dịch vụ như sau:"
+        intro_text = "Cong ty TNHH SX KD TM An Loc Phat xin cam on su quan tam cua Quy khach hang den san pham va dich vu cua chung toi. Nay ban giao cac hang hoa va dich vu nhu sau:"
     else:
         raw_date = order.get('date', '')
         try: odate = datetime.strptime(raw_date, "%Y-%m-%d").strftime("%d/%m/%Y")
         except: odate = raw_date
-        intro_text = "Công ty TNHH SX KD TM An Lộc Phát xin cám ơn sự quan tâm của Quý khách hàng đến sản phẩm và dịch vụ của chúng tôi. Xin trân trọng gửi tới Quý  khách hàng báo giá như sau:"
+        intro_text = "Cong ty TNHH SX KD TM An Loc Phat xin cam on su quan tam cua Quy khach hang den san pham va dich vu cua chung toi. Xin tran trong gui toi Quy khach hang bao gia nhu sau:"
 
     cust = order.get('customer', {})
     items = order.get('items', [])
@@ -271,7 +278,7 @@ def create_pdf(order, title):
     pdf.multi_cell(0, 5, txt(intro_text))
     pdf.ln(2)
     
-    # --- 4. TABLE (NO GAPS) ---
+    # --- 4. TABLE ---
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(10, 8, "STT", 1, 0, 'C', 1)
     pdf.cell(75, 8, txt("Tên hàng / Quy cách"), 1, 0, 'C', 1)
@@ -279,7 +286,6 @@ def create_pdf(order, title):
     pdf.cell(15, 8, "SL", 1, 0, 'C', 1)
     pdf.cell(35, 8, txt("Đơn giá"), 1, 0, 'C', 1)
     pdf.cell(40, 8, txt("Thành tiền"), 1, 1, 'C', 1)
-    # Tự động xuống dòng sau header, không cần ln() thêm
     
     sum_items_total = 0
     total_vat = 0
@@ -296,18 +302,16 @@ def create_pdf(order, title):
         sum_items_total += line_total
         total_vat += vat_val
         
-        # In hàng (border=1 để dính liền)
         pdf.cell(10, 8, str(i+1), 1, 0, 'C')
         pdf.cell(75, 8, txt(item.get('name', '')), 1, 0)
         pdf.cell(15, 8, txt(item.get('unit', '')), 1, 0, 'C')
         pdf.cell(15, 8, txt(str(item.get('qty', 0))), 1, 0, 'C')
         pdf.cell(35, 8, format_currency(price), 1, 0, 'R')
-        # Cell cuối cùng có ln=1 để tự xuống dòng, KHÔNG dùng pdf.ln() thêm
         pdf.cell(40, 8, format_currency(line_total), 1, 1, 'R')
     
     final_total = sum_items_total + total_vat
     
-    # Tổng kết (Cũng dùng cell liền mạch)
+    # Tổng kết
     pdf.cell(150, 8, txt("Cộng tiền hàng:"), 1, 0, 'R')
     pdf.cell(40, 8, format_currency(sum_items_total), 1, 1, 'R')
     
@@ -317,7 +321,7 @@ def create_pdf(order, title):
     pdf.cell(150, 8, txt("TỔNG CỘNG THANH TOÁN:"), 1, 0, 'R')
     pdf.cell(40, 8, format_currency(final_total), 1, 1, 'R')
     
-    pdf.ln(5) # Khoảng cách nhỏ trước khi viết bằng chữ
+    pdf.ln(5)
     
     money_text = ""
     if SAFE_MODE: money_text = f"Tong cong: {format_currency(final_total)} VND"
@@ -358,8 +362,9 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt("- Báo giá này áp dụng trong vòng 30 ngày."), 0, 1)
         pdf.ln(2)
         pdf.set_x(10)
-        pdf.multi_cell(190, 5, txt("Rất mong nhận được sự hợp tác của Quý khách hàng! Trân trọng! "))
-          
+        pdf.multi_cell(190, 5, txt("Rất mong nhận được sự hợp tác của Quý khách hàng"))
+        pdf.cell(0, 5, txt("Trân trọng!"), 0, 1)
+    
     return bytes(pdf.output())
 
 # --- MAIN APP ---
@@ -621,60 +626,4 @@ def main():
                                 time.sleep(1)
                                 st.rerun()
 
-        with tabs[0]: render_tab_content("Báo giá", "Thiết kế", "✅ Duyệt -> Thiết Kế", "BÁO GIÁ")
-        with tabs[1]: render_tab_content("Thiết kế", "Sản xuất", "✅ Duyệt TK -> Sản Xuất")
-        with tabs[2]: render_tab_content("Sản xuất", "Giao hàng", "✅ Xong -> Giao Hàng")
-        with tabs[3]: render_tab_content("Giao hàng", "Công nợ", "✅ Giao Xong -> Công Nợ", "PHIẾU GIAO HÀNG")
-        with tabs[4]: render_tab_content("Công nợ", None, "")
-
-        with tabs[5]: # Hoàn thành
-            orders = [o for o in all_orders if o.get('status') == 'Hoàn thành']
-            if orders:
-                data = []
-                for o in orders:
-                    data.append({
-                        "Mã": o['order_id'], "Khách": o['customer']['name'],
-                        "Tổng tiền": format_currency(o['financial']['total']),
-                        "Trạng thái": o.get('payment_status'),
-                        "Hoa hồng": o['financial'].get('commission_status')
-                    })
-                st.dataframe(pd.DataFrame(data), use_container_width=True)
-
-    # --- TAB 3: TÀI CHÍNH ---
-    elif menu == "3. Sổ Quỹ & Báo Cáo":
-        st.title("📊 Tài Chính")
-        tab1, tab2 = st.tabs(["Sổ Quỹ", "Báo Cáo"])
-        with tab1:
-            df = pd.DataFrame(fetch_cashbook())
-            if not df.empty:
-                df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
-                thu = df[df['type'] == 'Thu']['amount'].sum()
-                chi = df[df['type'] == 'Chi']['amount'].sum()
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Thu", format_currency(thu))
-                c2.metric("Chi", format_currency(chi))
-                c3.metric("Tồn", format_currency(thu - chi))
-                st.divider()
-            with st.form("expense"):
-                c1, c2, c3 = st.columns(3)
-                d = c1.date_input("Ngày")
-                a = c2.number_input("Chi phí", 0, step=10000)
-                desc = c3.text_input("Nội dung")
-                if st.form_submit_button("Lưu Chi"):
-                    save_cash_log(d, "Chi", a, desc)
-                    st.rerun()
-            if not df.empty: st.dataframe(df, use_container_width=True)
-        with tab2:
-            orders = fetch_all_orders()
-            if orders:
-                df = pd.DataFrame([{"Status": o.get('status'), "Staff": o.get('financial', {}).get('staff'), "Total": o.get('financial', {}).get('total', 0)} for o in orders])
-                if not df.empty:
-                    st.bar_chart(df['Status'].value_counts())
-                    st.bar_chart(df.groupby("Staff")['Total'].sum())
-
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        st.error("⚠️ Đã xảy ra lỗi ứng dụng:")
-        st.code(traceback.format_exc())
+        with tabs[0]: render_tab_content("Báo giá", "Thiết kế", "✅ Duyệt -> Thiết
