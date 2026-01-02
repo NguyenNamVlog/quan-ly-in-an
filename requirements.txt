@@ -6,7 +6,6 @@ Pillow
 watchdog
 onnxruntime
 pandas
-fpdf
 docxtpl
 plotly
 num2words
@@ -17,8 +16,9 @@ streamlit
 pandas
 gspread
 google-auth
-fpdf
+fpdf2
 docxtpl
 plotly
 num2words
 openpyxl
+
