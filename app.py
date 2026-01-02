@@ -15,25 +15,6 @@ FONT_PATH = 'Arial.ttf'
 # [1] DÁN LINK GOOGLE SHEET CỦA BẠN VÀO DƯỚI ĐÂY:
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit" 
 
-# [2] DÁN NỘI DUNG FILE JSON MỚI VÀO DƯỚI ĐÂY
-# Lưu ý: Giữ nguyên chữ r''' ở đầu và ''' ở cuối.
-# Xóa hết nội dung cũ ở giữa và dán cái mới vào.
-JSON_CONTENT = r'''
-{
-"type": "service_account",
-  "project_id": "quanlyinan",
-  "private_key_id": "6f7f37f10dd76e44a4f364855af8cf90a25c788b",
-  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQCWKgcFNlU5F8DN\nEHCimZgBLGh9+blpMkWHRgFkAwVyZqlV6NgIytHGyd7WYvf147WJAHjbwpLPuhqJ\nlcgubwsd3dt/1CYzdedpX93ZnXCz9IMbWJUsxmXwMzEgeqT5SPrdqrOnwWb749dR\nZ8Og6QrsJttqnlSn4yYe5DuKSsIEYKOQGOittBR8+BYXVBpHEFXuo3mI7TTBZlx1\ntblM7cajNCSZdvRFct7EYTzgswdqpIm+vQBATd1jb5doq+XfCG1CwNL5GoO+1s7W\nm7jWVHyYEiJZmEXPbWojrdd0acCrJuKNCJE0qYLLlDgcKobfgxq7dhS2XD36c9eW\nb+DlpBKlAgMBAAECggEANFKdkpvdcyDLLcjKLmXtWI9UM3z1tWluX5Wte18wIS4T\nV9tjlyCwmp8RdcsTUkrPINcYxZ4VEKtsfr9Beqh3i6cXygEudGTjRszAHQjmUdXj\nbv5dMDZLI7h6qDID1NawjtdhdRUHIMLBblyFBkbdZu6dKpfTsJIN4Nquwl+NHf/T\nqu6FTlLV2AzMw6kSKrw/pn+u9Yu8UiCcSZUkOTzQqaQFobMF5m13++v0iem9uWwA\ncjUub8h8Js3Aq2AZvKbvK23Bl00WYTZs/2aral3WFNfH7m8xGQD7PG5eov0iEzP+\nCbZOHkZsHonh0bvRCzBFBHjWUYx+YyDYfxR9pj046wKBgQDFKIKghoA/A6t4dWhT\nFT35BMMka5tmpO6pX8IRj7Iqmvz0agiewENezMjj5m69faozoaQQwWFumIbnEF/n\n47tK8gxR95XoIllj+OAGg5uhQOXbk6QegQMFcRY8qzZu4om0SEJXcPJ9aAzeQq/K\nF8mTm4c0Ft9vOKvEFATcENTe6wKBgQDC+wblOhAQhXvNpeQzoDgeDBqq2cpMXd7+\nv+fOyu/4/ENThjXrz3DGUKRGrvCCo2wow64bo1NHmkiyZR/WfUrFRjfor8j2afXS\nnHJAld7wmXUO7NeLL2I8JOq4KMpU0tTqznWRMfiK7KmcuaPIL9nbYBqzuzr1C6Js\niKVLcFMQrwKBgQCd+jzZJYzjcSxXZDRIxm+W9lLq/vJRR/0YaGtXqP2JGBFyQvhP\nRB13e73Ipx665VOY9X9CEcHhXYRS55MBez/a6KIol6tdixB3g7b2YUQ17IuB6waJ\njrR+CsRXrpT6Ork+ZNwLtqwHAnW1LlgvJepWRTwL5/v24cD4Z1YRg8ceKwKBgQCP\nbwEEkfENZlTL1LSKMdv2Zqsbcjm6cffAacYKPwnHnTOd9wYloaVxjhM7GCg/wh6n\n4kNre3uhGeNOsMt6CxN9CgnI97+bXhmDRKlbz6SAVDNjtmFdt47JddLhhMhLHAmb\nbiPYmu0erbicXYgZlPHrysf53csiRtvGgcMvOsMwawKBgQCTKwPzidvCObehaejV\nbJN9WeFv34lYN8OwHNS/Tb6d6w5pjF/plq2nUBFpLr3GfHbCh0a/Hzoi/a4qcGq9\nXT4MTGV0EsZvTV/79wHg4LFU8cNBYjlPElx7+zcWW8uc/zpwzAcf0ywGmAjDtidK\nIKryaxpUQUJSzQGLrf/Mw6NH5g==\n-----END PRIVATE KEY-----\n",
-  "client_email": "quanlyinan@quanlyinan.iam.gserviceaccount.com",
-  "client_id": "105384981732403020965",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/quanlyinan%40quanlyinan.iam.gserviceaccount.com",
-  "universe_domain": "googleapis.com"
-}
-''' 
-
 # --- HÀM TIỆN ÍCH ---
 def format_currency(value):
     if value is None: return "0"
@@ -49,13 +30,23 @@ def read_money(amount):
     except:
         return "..................... đồng."
 
-# --- KẾT NỐI GOOGLE SHEETS (DÙNG JSON TRỰC TIẾP) ---
+# --- KẾT NỐI GOOGLE SHEETS (LẤY TỪ ST.SECRETS) ---
 @st.cache_resource
 def get_gspread_client():
     try:
-        # Load JSON từ chuỗi string
-        creds_dict = json.loads(JSON_CONTENT)
-        
+        # Kiểm tra xem secrets đã được cấu hình chưa
+        if "service_account" not in st.secrets:
+            st.error("⚠️ Chưa cấu hình Secrets! Vui lòng vào Settings -> Secrets để dán thông tin JSON.")
+            return None
+
+        # Lấy thông tin từ Secrets ra Dictionary
+        creds_dict = dict(st.secrets["service_account"])
+
+        # [QUAN TRỌNG] Tự động sửa lỗi xuống dòng trong Private Key
+        # Dù bạn copy vào Secrets kiểu gì, dòng này sẽ đảm bảo Key luôn đúng format
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+
         scope = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
@@ -64,8 +55,9 @@ def get_gspread_client():
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(creds)
         return client
+
     except Exception as e:
-        st.error(f"Lỗi Key: {e}")
+        st.error(f"Lỗi xác thực Google (Kiểm tra lại Secrets): {e}")
         return None
 
 def load_db():
@@ -93,7 +85,7 @@ def load_db():
         return []
     except Exception as e:
         if "403" in str(e):
-            st.error("⚠️ Lỗi: Bạn chưa chia sẻ File Sheet cho email trong Key mới!")
+            st.error("⚠️ Lỗi Quyền: Hãy chia sẻ file Sheet cho email trong Secrets.")
         else:
             st.error(f"Lỗi tải dữ liệu: {e}")
         return []
