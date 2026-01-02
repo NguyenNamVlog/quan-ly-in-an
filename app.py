@@ -223,53 +223,59 @@ def create_pdf(order, title):
         text = str(text)
         return remove_accents(text) if SAFE_MODE else text
 
-    # --- 1. CHÈN HÌNH HOẶC TEXT TIÊU ĐỀ ---
+    # --- 1. HEADER (TIÊU ĐỀ CÔNG TY) ---
     if os.path.exists(HEADER_IMAGE):
         try:
-            # Ưu tiên hình nếu có
             pdf.image(HEADER_IMAGE, x=10, y=10, w=190)
             pdf.set_y(pdf.get_y() + 40)
         except: pass
     else:
-        # Nếu không có hình, in thông tin công ty chi tiết
         pdf.set_font_size(14)
-        # Tên công ty in to
         pdf.cell(0, 8, txt('CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT'), 0, 1, 'C')
-        
-        pdf.set_font_size(10) # Font nhỏ hơn cho chi tiết
+        pdf.set_font_size(10)
         pdf.cell(0, 5, txt('Mã số thuế: 3603995632'), 0, 1, 'C')
         pdf.cell(0, 5, txt('Địa chỉ: A1/204A, hẻm 244, đường Bùi Hữu Nghĩa, phường Biên Hòa, tỉnh Đồng Nai'), 0, 1, 'C')
         pdf.cell(0, 5, txt('Điện thoại: 0251 777 6868       Email: anlocphat68.ltd@gmail.com'), 0, 1, 'C')
         pdf.cell(0, 5, txt('Số tài khoản: 451557254 – Ngân hàng TMCP Việt Nam Thịnh Vượng - CN Đồng Nai'), 0, 1, 'C')
         pdf.ln(5)
 
-    # --- TIÊU ĐỀ PHIẾU ---
+    # --- 2. TIÊU ĐỀ PHIẾU ---
     pdf.set_font_size(16)
     pdf.cell(0, 10, txt(title), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.set_font_size(11)
     
+    # Xác định loại phiếu để in nội dung phù hợp
+    is_delivery = "GIAO HÀNG" in title.upper()
+    
+    # --- 3. THÔNG TIN ĐƠN & LỜI DẪN ---
     oid = order.get('order_id', '')
-    if "GIAO HÀNG" in title.upper():
+    if is_delivery:
         odate = datetime.now().strftime("%d/%m/%Y")
+        intro_text = "Cong ty TNHH SX KD TM An Loc Phat xin cam on su quan tam cua Quy khach hang den san pham va dich vu cua chung toi. Nay ban giao cac hang hoa va dich vu nhu sau:"
     else:
         raw_date = order.get('date', '')
         try: odate = datetime.strptime(raw_date, "%Y-%m-%d").strftime("%d/%m/%Y")
         except: odate = raw_date
+        intro_text = "Cong ty TNHH SX KD TM An Loc Phat xin cam on su quan tam cua Quy khach hang den san pham va dich vu cua chung toi. Xin tran trong gui toi Quy khach hang bao gia nhu sau:"
 
     cust = order.get('customer', {})
     items = order.get('items', [])
-    fin = order.get('financial', {})
     
     pdf.cell(0, 8, txt(f"Mã số: {oid} | Ngày: {odate}"), new_x="LMARGIN", new_y="NEXT", align='C')
-    pdf.ln(5)
+    pdf.ln(2)
+    
+    # Thông tin khách
     pdf.cell(0, 7, txt(f"Khách hàng: {cust.get('name', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 7, txt(f"Điện thoại: {cust.get('phone', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 7, txt(f"Địa chỉ: {cust.get('address', '')}"), new_x="LMARGIN", new_y="NEXT")
+    
+    # Lời dẫn
+    pdf.ln(3)
+    pdf.multi_cell(0, 6, txt(intro_text))
     pdf.ln(5)
     
-    # Header Bảng
+    # --- 4. BẢNG HÀNG HÓA ---
     pdf.set_fill_color(230, 230, 230)
-    # Lưu ý: height = 8 để các dòng thoáng, border = 1 để kẻ bảng
     pdf.cell(10, 8, "STT", 1, 0, 'C', 1)
     pdf.cell(75, 8, txt("Tên hàng / Quy cách"), 1, 0, 'C', 1)
     pdf.cell(15, 8, txt("ĐVT"), 1, 0, 'C', 1)
@@ -293,7 +299,6 @@ def create_pdf(order, title):
         sum_items_total += line_total
         total_vat += vat_val
         
-        # Dòng dữ liệu: border=1 để kẻ khung liền nhau
         pdf.cell(10, 8, str(i+1), 1, 0, 'C')
         pdf.cell(75, 8, txt(item.get('name', '')), 1, 0)
         pdf.cell(15, 8, txt(item.get('unit', '')), 1, 0, 'C')
@@ -304,7 +309,7 @@ def create_pdf(order, title):
     
     final_total = sum_items_total + total_vat
     
-    # Phần tổng kết (không kẻ bảng để thoáng, hoặc kẻ nếu muốn)
+    # Tổng kết
     pdf.cell(150, 8, txt("Cộng tiền hàng:"), 1, 0, 'R')
     pdf.cell(40, 8, format_currency(sum_items_total), 1, 1, 'R')
     pdf.ln(8)
@@ -317,12 +322,46 @@ def create_pdf(order, title):
     pdf.cell(40, 8, format_currency(final_total), 1, 1, 'R')
     pdf.ln(10)
     
+    # Đọc số tiền
     money_text = ""
     if SAFE_MODE: money_text = f"Tong cong: {format_currency(final_total)} VND"
     else:
         try: money_text = read_money_vietnamese(final_total)
         except: money_text = f"{format_currency(final_total)} đồng."
     pdf.multi_cell(0, 8, txt(f"Bằng chữ: {money_text}"))
+    pdf.ln(5)
+
+    # --- 5. CHỮ KÝ (KHÁC NHAU GIỮA BÁO GIÁ VÀ GIAO HÀNG) ---
+    if is_delivery:
+        # Phiếu Giao Hàng: Người Nhận (Trái) - Người Giao (Phải)
+        y_sig = pdf.get_y()
+        pdf.cell(90, 5, txt("NGƯỜI NHẬN"), 0, 0, 'C')
+        pdf.cell(100, 5, txt("NGƯỜI GIAO"), 0, 1, 'C')
+        pdf.ln(25) # Khoảng trống ký tên
+    else:
+        # Báo Giá: Người Báo Giá (Phải)
+        pdf.cell(0, 5, txt("NGƯỜI BÁO GIÁ"), 0, 1, 'R')
+        pdf.ln(25)
+
+    # --- 6. FOOTER / LƯU Ý (KHÁC NHAU) ---
+    pdf.ln(5)
+    pdf.set_font_size(10)
+    
+    if is_delivery:
+        # Footer Giao Hàng
+        pdf.multi_cell(0, 5, txt("* Quy khach vui long kiem tra va phan hoi ngay ve tinh trang hang hoa khi giao nhan!"))
+        pdf.multi_cell(0, 5, txt("* Giao hang mien phi trong noi thanh thanh pho Bien Hoa voi don hang >1.000.000d"))
+        pdf.ln(2)
+        pdf.multi_cell(0, 5, txt("Rat mong duoc hop tac voi Quy khach hang. Tran trong!"))
+    else:
+        # Footer Báo Giá
+        pdf.cell(0, 5, txt("Lưu ý:"), 0, 1)
+        pdf.cell(0, 5, txt("- Giá trên đã bao gồm vận chuyển, giao hàng."), 0, 1)
+        pdf.cell(0, 5, txt("- Thời gian hoàn thành, giao hàng: từ 03 - 05 ngày."), 0, 1)
+        pdf.cell(0, 5, txt("- Báo giá này áp dụng trong vòng 30 ngày."), 0, 1)
+        pdf.ln(3)
+        pdf.multi_cell(0, 5, txt("Rat mong nhan duoc su hop tac cua Quy khach hang"))
+        pdf.cell(0, 5, txt("Trân trọng!"), 0, 1)
     
     return bytes(pdf.output())
 
@@ -433,14 +472,11 @@ def main():
         tabs = st.tabs(["1️⃣ Báo Giá", "2️⃣ Thiết Kế", "3️⃣ Sản Xuất", "4️⃣ Giao Hàng", "5️⃣ Công Nợ", "✅ Hoàn Thành"])
         
         def render_tab_content(status_filter, next_status, btn_text, pdf_type=None):
-            # Lọc đơn hàng theo trạng thái
             current_orders = [o for o in all_orders if o.get('status') == status_filter]
-            
             if not current_orders:
                 st.info("Không có đơn hàng nào trong mục này.")
                 return
 
-            # --- 1. HIỂN THỊ DẠNG BẢNG (MASTER VIEW) ---
             table_data = []
             for o in current_orders:
                 cust = o.get('customer', {})
@@ -505,14 +541,12 @@ def main():
                                 st.rerun()
 
                 st.write("---")
-                # Thêm nút In Phiếu Giao Hàng ở đây
                 c_act1, c_act2, c_act3, c_act4 = st.columns(4)
                 with c_act1:
                     if pdf_type:
                         pdf_data = create_pdf(selected_order_data, pdf_type)
                         st.download_button(f"🖨️ In {pdf_type}", pdf_data, f"{oid}.pdf", "application/pdf", key=f"dl_{oid}", use_container_width=True)
                 with c_act2:
-                    # Nút in Phiếu Giao Hàng (LUÔN HIỆN)
                     pdf_gh = create_pdf(selected_order_data, "PHIẾU GIAO HÀNG, KIÊM PHIẾU THU")
                     st.download_button("🚚 In Phiếu Giao", pdf_gh, f"GH_{oid}.pdf", "application/pdf", key=f"dl_gh_{oid}", use_container_width=True)
                 with c_act3:
