@@ -202,7 +202,7 @@ def gen_id():
         if str(o.get('order_id', '')).endswith(year): count += 1
     return f"{count+1:03d}/DH.{year}"
 
-# --- PDF GENERATOR (ĐÃ TỐI ƯU KHOẢNG CÁCH DÒNG) ---
+# --- PDF GENERATOR ---
 class PDFGen(FPDF):
     def header(self): pass
 
@@ -228,7 +228,6 @@ def create_pdf(order, title):
     if os.path.exists(HEADER_IMAGE):
         try:
             pdf.image(HEADER_IMAGE, x=10, y=10, w=190)
-            # Giảm khoảng cách sau hình (từ +40 xuống +35 nếu cần sát hơn)
             pdf.set_y(pdf.get_y() + 35) 
         except: pass
     else:
@@ -239,11 +238,11 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt('Địa chỉ: A1/204A, hẻm 244, đường Bùi Hữu Nghĩa, phường Biên Hòa, tỉnh Đồng Nai'), 0, 1, 'C')
         pdf.cell(0, 5, txt('Điện thoại: 0251 777 6868       Email: anlocphat68.ltd@gmail.com'), 0, 1, 'C')
         pdf.cell(0, 5, txt('Số tài khoản: 451557254 – Ngân hàng TMCP Việt Nam Thịnh Vượng - CN Đồng Nai'), 0, 1, 'C')
-        pdf.ln(2) # Giảm khoảng trống sau header text
+        pdf.ln(2)
 
     # --- 2. TIÊU ĐỀ PHIẾU ---
     pdf.set_font_size(16)
-    pdf.cell(0, 8, txt(title), new_x="LMARGIN", new_y="NEXT", align='C') # Giảm chiều cao cell tiêu đề từ 10 xuống 8
+    pdf.cell(0, 8, txt(title), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.set_font_size(11)
     
     oid = order.get('order_id', '')
@@ -261,18 +260,19 @@ def create_pdf(order, title):
     cust = order.get('customer', {})
     items = order.get('items', [])
     
-    # --- 3. THÔNG TIN KHÁCH HÀNG (Giảm ln) ---
+    # --- 3. THÔNG TIN KHÁCH HÀNG ---
     pdf.cell(0, 6, txt(f"Mã số: {oid} | Ngày: {odate}"), new_x="LMARGIN", new_y="NEXT", align='C')
-    pdf.ln(1) # Giảm khoảng cách nhỏ
+    pdf.ln(1) 
     pdf.cell(0, 6, txt(f"Khách hàng: {cust.get('name', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 6, txt(f"Điện thoại: {cust.get('phone', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 6, txt(f"Địa chỉ: {cust.get('address', '')}"), new_x="LMARGIN", new_y="NEXT")
     
-    pdf.ln(2) # Giảm khoảng cách trước lời dẫn
-    pdf.multi_cell(0, 5, txt(intro_text)) # Giảm chiều cao dòng text
-    pdf.ln(2) # Giảm khoảng cách trước bảng
+    pdf.ln(2)
+    pdf.multi_cell(0, 5, txt(intro_text))
+    pdf.ln(2)
     
     # --- 4. BẢNG HÀNG HÓA ---
+    # Header
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(10, 8, "STT", 1, 0, 'C', 1)
     pdf.cell(75, 8, txt("Tên hàng / Quy cách"), 1, 0, 'C', 1)
@@ -280,7 +280,7 @@ def create_pdf(order, title):
     pdf.cell(15, 8, "SL", 1, 0, 'C', 1)
     pdf.cell(35, 8, txt("Đơn giá"), 1, 0, 'C', 1)
     pdf.cell(40, 8, txt("Thành tiền"), 1, 1, 'C', 1)
-    pdf.ln(8) # Chiều cao dòng header
+    pdf.ln(8) 
     
     sum_items_total = 0
     total_vat = 0
@@ -297,28 +297,29 @@ def create_pdf(order, title):
         sum_items_total += line_total
         total_vat += vat_val
         
+        # [FIX] Đã XÓA pdf.ln(8) để các dòng dính liền nhau
         pdf.cell(10, 8, str(i+1), 1, 0, 'C')
         pdf.cell(75, 8, txt(item.get('name', '')), 1, 0)
         pdf.cell(15, 8, txt(item.get('unit', '')), 1, 0, 'C')
         pdf.cell(15, 8, txt(str(item.get('qty', 0))), 1, 0, 'C')
         pdf.cell(35, 8, format_currency(price), 1, 0, 'R')
         pdf.cell(40, 8, format_currency(line_total), 1, 1, 'R')
-        pdf.ln(8) # Chiều cao dòng data
+        pdf.ln(8) # Xuống dòng cho hàng tiếp theo
     
     final_total = sum_items_total + total_vat
     
-    # Tổng kết (Giảm ln giữa các dòng tổng)
-    pdf.cell(150, 7, txt("Cộng tiền hàng:"), 1, 0, 'R')
-    pdf.cell(40, 7, format_currency(sum_items_total), 1, 1, 'R')
-    pdf.ln(7)
+    # Tổng kết - [FIX] Dùng border=1 để tạo khung dính liền với bảng trên
+    pdf.cell(150, 8, txt("Cộng tiền hàng:"), 1, 0, 'R')
+    pdf.cell(40, 8, format_currency(sum_items_total), 1, 1, 'R')
+    pdf.ln(8)
     
-    pdf.cell(150, 7, txt(f"Tiền VAT:"), 1, 0, 'R')
-    pdf.cell(40, 7, format_currency(total_vat), 1, 1, 'R')
-    pdf.ln(7)
+    pdf.cell(150, 8, txt(f"Tiền VAT:"), 1, 0, 'R')
+    pdf.cell(40, 8, format_currency(total_vat), 1, 1, 'R')
+    pdf.ln(8)
     
-    pdf.cell(150, 7, txt("TỔNG CỘNG THANH TOÁN:"), 1, 0, 'R')
-    pdf.cell(40, 7, format_currency(final_total), 1, 1, 'R')
-    pdf.ln(8) # Tăng nhẹ khoảng cách trước dòng chữ tiền
+    pdf.cell(150, 8, txt("TỔNG CỘNG THANH TOÁN:"), 1, 0, 'R')
+    pdf.cell(40, 8, format_currency(final_total), 1, 1, 'R')
+    pdf.ln(10)
     
     money_text = ""
     if SAFE_MODE: money_text = f"Tong cong: {format_currency(final_total)} VND"
@@ -334,25 +335,23 @@ def create_pdf(order, title):
     if is_delivery:
         pdf.cell(95, 5, txt("NGƯỜI NHẬN"), 0, 0, 'C')
         pdf.cell(95, 5, txt("NGƯỜI GIAO"), 0, 1, 'C')
-        pdf.ln(20) # Giảm khoảng cách ký tên
+        pdf.ln(20) 
     else:
         pdf.cell(0, 5, txt("NGƯỜI BÁO GIÁ"), 0, 1, 'R')
-        pdf.ln(20) # Giảm khoảng cách ký tên
+        pdf.ln(20)
 
-    # --- 6. FOOTER / LƯU Ý (SÁT NHAU HƠN) ---
+    # --- 6. FOOTER ---
     pdf.ln(2)
     pdf.set_font_size(10)
     pdf.set_x(10)
     
     if is_delivery:
-        # Footer Giao Hàng - Dòng sát nhau
         pdf.multi_cell(190, 5, txt("* Quý khách vui lòng kiểm tra và phản hồi ngay về tình trạng hàng hoá khi giao nhận!"))
         pdf.set_x(10)
         pdf.multi_cell(190, 5, txt("* Giao hàng miễn phí trong nội thành thành phố Biên Hoà với đơn hàng >1.000.000đ"))
         pdf.set_x(10)
         pdf.multi_cell(190, 5, txt("Rất mong được hợp tác với Quý khách hàng. Trân trọng!"))
     else:
-        # Footer Báo Giá - Dòng sát nhau
         pdf.cell(0, 5, txt("Lưu ý:"), 0, 1)
         pdf.set_x(10)
         pdf.cell(0, 5, txt("- Giá trên đã bao gồm vận chuyển, giao hàng."), 0, 1)
