@@ -15,7 +15,7 @@ from google.oauth2.service_account import Credentials
 # --- CẤU HÌNH ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit"
 TEMPLATE_CONTRACT = 'Hop dong .docx' 
-FONT_FILENAME = 'Roboto-Regular.ttf'
+FONT_FILENAME = 'ARIAL.ttf'
 
 # --- HÀM HỖ TRỢ: TẢI FONT (BẮT BUỘC CHO FPDF2) ---
 def check_and_download_font():
