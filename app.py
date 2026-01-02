@@ -31,44 +31,59 @@ def read_money(amount):
     except:
         return "..................... đồng."
 
-# --- QUẢN LÝ DATABASE (GOOGLE SHEETS) ---
+# --- QUẢN LÝ DATABASE (GOOGLE SHEETS - AUTO FIX LỖI JWT) ---
 def get_db_connection():
-    return st.connection("gsheets", type=GSheetsConnection)
+    """
+    Hàm này tự động sửa lỗi Private Key bị sai định dạng \n
+    Giúp kết nối thành công kể cả khi copy key chưa chuẩn.
+    """
+    try:
+        # 1. Lấy thông tin từ secrets
+        raw_secrets = st.secrets["connections"]["gsheets"]
+        
+        # Chuyển sang dict để có thể chỉnh sửa
+        secrets_dict = dict(raw_secrets)
+
+        # 2. Tự động sửa lỗi xuống dòng trong Private Key
+        if "private_key" in secrets_dict:
+            key = secrets_dict["private_key"]
+            # Nếu key chứa ký tự \n (hai ký tự riêng biệt), thay bằng xuống dòng thật
+            if "\\n" in key:
+                secrets_dict["private_key"] = key.replace("\\n", "\n")
+        
+        # 3. Tạo kết nối với thông tin đã sửa
+        # Truyền trực tiếp các tham số đã sửa vào hàm kết nối
+        conn = st.connection("gsheets", type=GSheetsConnection, **secrets_dict)
+        return conn
+
+    except Exception as e:
+        # Nếu lỗi quá nặng thì dùng cách mặc định
+        return st.connection("gsheets", type=GSheetsConnection)
 
 def load_db():
-    """Tải dữ liệu Đơn hàng từ Google Sheets"""
     try:
         conn = get_db_connection()
-        # Thêm tham số spreadsheet=SHEET_URL để chỉ định file
+        # Ép buộc dùng URL này
         df = conn.read(spreadsheet=SHEET_URL, worksheet="Orders", ttl=0)
         
-        if df.empty:
-            return []
+        if df.empty: return []
         
         data = []
         for _, row in df.iterrows():
             item = row.to_dict()
             try:
-                # Parse JSON nếu dữ liệu là string
-                if isinstance(item.get('customer'), str):
-                    item['customer'] = json.loads(item['customer'])
-                if isinstance(item.get('items'), str):
-                    item['items'] = json.loads(item['items'])
-                if isinstance(item.get('financial'), str):
-                    item['financial'] = json.loads(item['financial'])
-            except:
-                continue 
+                if isinstance(item.get('customer'), str): item['customer'] = json.loads(item['customer'])
+                if isinstance(item.get('items'), str): item['items'] = json.loads(item['items'])
+                if isinstance(item.get('financial'), str): item['financial'] = json.loads(item['financial'])
+            except: continue
             data.append(item)
         return data
     except Exception as e:
-        # Nếu chưa có dữ liệu hoặc lỗi khác, trả về list rỗng để không sập app
         return []
 
 def save_db(data):
-    """Lưu dữ liệu Đơn hàng lên Google Sheets"""
     try:
         conn = get_db_connection()
-        
         if not data:
             df = pd.DataFrame()
             conn.update(spreadsheet=SHEET_URL, worksheet="Orders", data=df)
@@ -77,7 +92,6 @@ def save_db(data):
         data_to_save = []
         for item in data:
             clean_item = item.copy()
-            # Serialize JSON
             clean_item['customer'] = json.dumps(item['customer'], ensure_ascii=False)
             clean_item['items'] = json.dumps(item['items'], ensure_ascii=False)
             clean_item['financial'] = json.dumps(item['financial'], ensure_ascii=False)
@@ -90,18 +104,15 @@ def save_db(data):
         st.error(f"Lỗi lưu Database: {e}")
 
 def load_cash():
-    """Tải Sổ quỹ từ Google Sheets"""
     try:
         conn = get_db_connection()
         df = conn.read(spreadsheet=SHEET_URL, worksheet="Cashbook", ttl=0)
-        if df.empty:
-            return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
+        if df.empty: return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
         return df
     except:
         return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
 
 def save_cash(df):
-    """Lưu Sổ quỹ lên Google Sheets"""
     try:
         conn = get_db_connection()
         conn.update(spreadsheet=SHEET_URL, worksheet="Cashbook", data=df)
@@ -112,7 +123,7 @@ def save_cash(df):
 def generate_order_id():
     data = load_db()
     today = datetime.now()
-    year_suffix = today.strftime("%y") 
+    year_suffix = today.strftime("%y")
     count = 0
     if data:
         for item in data:
@@ -239,7 +250,7 @@ def create_contract(order):
     except Exception as e:
         return None
 
-# --- MÀN HÌNH ĐĂNG NHẬP ---
+# --- ĐĂNG NHẬP ---
 def login_screen():
     st.title("🔐 Đăng Nhập Hệ Thống")
     c1, c2, c3 = st.columns([1, 2, 1])
@@ -251,12 +262,12 @@ def login_screen():
             if submitted:
                 if username == "admin" and password == "admin":
                     st.session_state.logged_in = True
-                    st.success("Đăng nhập thành công!")
+                    st.success("Thành công")
                     st.rerun()
                 else:
-                    st.error("Sai tên đăng nhập hoặc mật khẩu!")
+                    st.error("Sai thông tin")
 
-# --- ỨNG DỤNG CHÍNH ---
+# --- APP ---
 def run_app():
     st.sidebar.title(f"👤 Admin")
     if st.sidebar.button("Đăng Xuất"):
@@ -457,6 +468,7 @@ def run_app():
                                 c_fin1, c_fin2 = st.columns(2)
                                 with c_fin1:
                                     pay_stat = order_obj.get('payment_status', 'Chưa TT')
+                                    st.caption(f"Khách TT: {pay_stat}")
                                     if pay_stat == 'Chưa TT':
                                         if st.button("✅ Khách Đã Trả", key=f"pay_c_{sel_id}_{i}"):
                                             order_obj['payment_status'] = 'Đã TT'
@@ -469,6 +481,7 @@ def run_app():
                                             st.rerun()
                                 with c_fin2:
                                     comm_stat = order_obj.get('financial', {}).get('commission_status', 'Chưa TT')
+                                    st.caption(f"Hoa hồng: {comm_stat}")
                                     if comm_stat == 'Chưa TT':
                                         if st.button("💰 Đã Chi HH", key=f"pay_hh_{sel_id}_{i}"):
                                             order_obj['financial']['commission_status'] = 'Đã TT'
