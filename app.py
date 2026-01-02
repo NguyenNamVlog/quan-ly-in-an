@@ -394,31 +394,38 @@ def main():
                 } for x in orders])
                 st.dataframe(df, use_container_width=True)
 
-    # --- TAB 3: SỔ QUỸ & BÁO CÁO ---
+    # --- TAB 3: SỔ QUỸ & BÁO CÁO (CẬP NHẬT TỒN QUỸ) ---
     elif menu == "3. Sổ Quỹ & Báo Cáo":
         st.title("📊 Tài Chính & Báo Cáo")
         
         tab1, tab2 = st.tabs(["Sổ Quỹ Tiền Mặt", "Báo Cáo Hiệu Suất"])
         
         with tab1:
+            # Load Cashbook
             cash_records = fetch_cashbook()
             df_cash = pd.DataFrame(cash_records)
             
+            # --- PHẦN TÍNH TOÁN TỒN QUỸ MỚI ---
             if not df_cash.empty:
+                # Chuyển đổi cột amount sang số để tính toán
                 df_cash['amount'] = pd.to_numeric(df_cash['amount'], errors='coerce').fillna(0)
+                
+                # Tính tổng Thu và Chi
                 total_thu = df_cash[df_cash['type'] == 'Thu']['amount'].sum()
                 total_chi = df_cash[df_cash['type'] == 'Chi']['amount'].sum()
                 ton_quy = total_thu - total_chi
                 
+                # Hiển thị Metrics to rõ
                 st.write("### 💵 TÌNH HÌNH TÀI CHÍNH")
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Tổng Thu", format_currency(total_thu), delta="VNĐ")
                 m2.metric("Tổng Chi", format_currency(total_chi), delta="-VNĐ", delta_color="inverse")
                 m3.metric("TỒN QUỸ", format_currency(ton_quy), delta="Thực tế")
                 st.divider()
+            # -----------------------------------
 
             with st.form("add_expense"):
-                st.write("**Nhập chi phí phát sinh:**")
+                st.write("**Nhập chi phí phát sinh (Tiền điện, nước, mua vật tư...):**")
                 c1, c2, c3 = st.columns(3)
                 d = c1.date_input("Ngày")
                 a = c2.number_input("Số tiền chi", 0, step=10000)
@@ -430,6 +437,7 @@ def main():
             
             if not df_cash.empty:
                 st.write("**Lịch sử giao dịch:**")
+                # Format lại cột tiền để hiển thị đẹp trong bảng
                 df_display = df_cash.copy()
                 df_display['amount'] = df_display['amount'].apply(format_currency)
                 st.dataframe(df_display, use_container_width=True)
