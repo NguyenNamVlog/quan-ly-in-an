@@ -3,7 +3,7 @@ import pandas as pd
 import json
 import time
 import os
-import requests
+import unicodedata
 from datetime import datetime
 from fpdf import FPDF
 from docxtpl import DocxTemplate
@@ -15,21 +15,19 @@ from google.oauth2.service_account import Credentials
 # --- CẤU HÌNH ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit"
 TEMPLATE_CONTRACT = 'Hop dong .docx' 
-FONT_FILENAME = 'ARIAL.ttf'
+FONT_FILENAME = 'arial.ttf'  # Tên file font có sẵn trong thư mục
 
-# --- HÀM HỖ TRỢ: TẢI FONT (BẮT BUỘC CHO FPDF2) ---
-def check_and_download_font():
-    """Tải font Roboto nếu chưa có"""
-    if not os.path.exists(FONT_FILENAME):
-        try:
-            url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf"
-            response = requests.get(url)
-            with open(FONT_FILENAME, 'wb') as f:
-                f.write(response.content)
-        except Exception as e:
-            st.error(f"Lỗi tải font: {e}")
+# --- HÀM HỖ TRỢ XỬ LÝ VĂN BẢN ---
+def remove_accents(input_str):
+    """
+    Hàm bỏ dấu tiếng Việt (Fallback an toàn khi không tìm thấy font)
+    """
+    if not input_str: return ""
+    input_str = str(input_str)
+    s = input_str.replace('đ', 'd').replace('Đ', 'D')
+    nfkd_form = unicodedata.normalize('NFKD', s)
+    return "".join([c for c in nfkd_form if not unicodedata.combining(c)])
 
-# --- HÀM HỖ TRỢ TIỀN TỆ ---
 def format_currency(value):
     if value is None: return "0"
     try: return "{:,.0f}".format(float(value))
@@ -161,46 +159,74 @@ def gen_id():
         if str(o.get('order_id', '')).endswith(year): count += 1
     return f"{count+1:03d}/DH.{year}"
 
-# --- PDF GENERATOR ---
+# --- PDF GENERATOR (DÙNG FONT LOCAL - HỖ TRỢ TIẾNG VIỆT) ---
 class PDFGen(FPDF):
     def header(self):
-        check_and_download_font()
-        try:
-            self.add_font('Roboto', '', FONT_FILENAME)
-            self.set_font('Roboto', '', 14)
-            self.cell(0, 10, 'CÔNG TY IN ẤN AN LỘC PHÁT', new_x="LMARGIN", new_y="NEXT", align='C')
+        # Kiểm tra file font có tồn tại không
+        if os.path.exists(FONT_FILENAME):
+            try:
+                # Đăng ký font Arial từ file local
+                self.add_font('ArialLocal', '', FONT_FILENAME)
+                self.set_font('ArialLocal', '', 14)
+                self.cell(0, 10, 'CÔNG TY IN ẤN AN LỘC PHÁT', new_x="LMARGIN", new_y="NEXT", align='C')
+                self.ln(5)
+            except RuntimeError:
+                # Nếu file lỗi, dùng font mặc định
+                self.set_font('Helvetica', '', 14)
+                self.cell(0, 10, 'CONG TY IN AN AN LOC PHAT', new_x="LMARGIN", new_y="NEXT", align='C')
+                self.ln(5)
+        else:
+            # Nếu không có file font
+            self.set_font('Helvetica', '', 14)
+            self.cell(0, 10, 'CONG TY IN AN AN LOC PHAT', new_x="LMARGIN", new_y="NEXT", align='C')
             self.ln(5)
-        except: pass
 
 def create_pdf(order, title):
     pdf = PDFGen()
     pdf.add_page()
-    check_and_download_font()
     
-    try:
-        pdf.add_font('Roboto', '', FONT_FILENAME)
-        pdf.set_font('Roboto', '', 11)
-    except: pdf.set_font('Helvetica', '', 11)
+    # 1. Cấu hình Font và Safe Mode
+    SAFE_MODE = False
+    
+    if os.path.exists(FONT_FILENAME):
+        try:
+            pdf.add_font('ArialLocal', '', FONT_FILENAME)
+            pdf.set_font('ArialLocal', '', 11)
+        except:
+            # Lỗi load font -> Dùng font mặc định & Bật chế độ không dấu
+            pdf.set_font('Helvetica', '', 11)
+            SAFE_MODE = True
+    else:
+        # Không tìm thấy file -> Dùng font mặc định & Bật chế độ không dấu
+        pdf.set_font('Helvetica', '', 11)
+        SAFE_MODE = True
 
+    # 2. Hàm xử lý text (Nếu safe mode thì bỏ dấu)
     def txt(text):
-        return str(text) if text else ""
+        if not text: return ""
+        text = str(text)
+        return remove_accents(text) if SAFE_MODE else text
 
-    oid = order.get('order_id', '')
-    odate = order.get('date', '')
-    cust = order.get('customer', {})
-    items = order.get('items', [])
+    # --- NỘI DUNG PDF ---
     
+    # Tiêu đề
     pdf.set_font_size(16)
     pdf.cell(0, 10, txt(title), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.set_font_size(11)
+    
+    # Thông tin chung
+    oid = order.get('order_id', '')
+    odate = order.get('date', '')
     pdf.cell(0, 8, txt(f"Mã: {oid} | Ngày: {odate}"), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.ln(5)
     
+    cust = order.get('customer', {})
     pdf.cell(0, 7, txt(f"Khách hàng: {cust.get('name', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 7, txt(f"SĐT: {cust.get('phone', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 7, txt(f"Địa chỉ: {cust.get('address', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(5)
     
+    # Table Header
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(10, 8, "STT", border=1, align='C', fill=True)
     pdf.cell(90, 8, txt("Tên hàng / Quy cách"), border=1, align='C', fill=True)
@@ -209,6 +235,7 @@ def create_pdf(order, title):
     pdf.cell(40, 8, txt("Thành tiền"), border=1, align='C', fill=True, new_x="LMARGIN", new_y="NEXT")
     
     total = 0
+    items = order.get('items', [])
     for i, item in enumerate(items):
         try: item_total = float(item.get('total', 0))
         except: item_total = 0
@@ -224,9 +251,21 @@ def create_pdf(order, title):
     pdf.cell(40, 8, format_currency(total), border=1, align='R', new_x="LMARGIN", new_y="NEXT")
     pdf.ln(10)
     
-    try: money_text = read_money_vietnamese(total)
-    except: money_text = f"{format_currency(total)} đồng."
+    # Đọc tiền
+    money_text = ""
+    if SAFE_MODE:
+        money_text = f"Tong cong: {format_currency(total)} VND"
+    else:
+        try: money_text = read_money_vietnamese(total)
+        except: money_text = f"{format_currency(total)} đồng."
+    
     pdf.multi_cell(0, 8, txt(f"Bằng chữ: {money_text}"))
+    
+    # Cảnh báo nếu thiếu font
+    if SAFE_MODE:
+        pdf.ln(10)
+        pdf.set_text_color(255, 0, 0)
+        pdf.cell(0, 5, "Luu y: File font tieng Viet (arial.ttf) chua duoc upload len he thong.", new_x="LMARGIN", new_y="NEXT", align='C')
     
     return pdf.output()
 
@@ -235,14 +274,16 @@ def main():
     st.set_page_config(page_title="Hệ Thống In Ấn", layout="wide")
     menu = st.sidebar.radio("CHỨC NĂNG", ["1. Tạo Báo Giá", "2. Quản Lý Đơn Hàng (Pipeline)", "3. Sổ Quỹ & Báo Cáo"])
 
-    # Khởi tạo giỏ hàng nếu chưa có
     if 'cart' not in st.session_state: st.session_state.cart = []
     if 'last_order' not in st.session_state: st.session_state.last_order = None
 
     if menu == "1. Tạo Báo Giá":
         st.title("📝 Tạo Báo Giá Mới")
         
-        # 1. Thông tin khách hàng (Form riêng hoặc input ngoài để không bị reset)
+        # Kiểm tra file font
+        if not os.path.exists(FONT_FILENAME):
+            st.warning(f"⚠️ Chưa tìm thấy file '{FONT_FILENAME}' trong thư mục. PDF sẽ in không dấu.")
+
         with st.container():
             st.subheader("1. Thông tin khách hàng")
             c1, c2 = st.columns(2)
@@ -252,8 +293,6 @@ def main():
             staff = st.selectbox("Nhân Viên", ["Nam", "Dương", "Thảo", "Khác"], key="input_staff")
 
         st.divider()
-        
-        # 2. Form thêm hàng hóa (Tách biệt để có thể thêm nhiều dòng)
         st.subheader("2. Chi tiết hàng hóa")
         with st.form("add_item_form", clear_on_submit=True):
             c3, c4, c5 = st.columns([3, 1, 2])
@@ -261,45 +300,33 @@ def main():
             i_qty = c4.number_input("Số lượng", 1, step=1)
             i_price = c5.number_input("Đơn giá", 0, step=1000)
             
-            # Nút thêm hàng
             if st.form_submit_button("➕ Thêm vào danh sách"):
                 if i_name:
                     item_total = i_qty * i_price
                     st.session_state.cart.append({
-                        "name": i_name,
-                        "qty": i_qty,
-                        "price": i_price,
-                        "total": item_total
+                        "name": i_name, "qty": i_qty, "price": i_price, "total": item_total
                     })
                     st.toast(f"Đã thêm: {i_name}")
-                else:
-                    st.error("Vui lòng nhập tên hàng!")
+                else: st.error("Vui lòng nhập tên hàng!")
 
-        # 3. Hiển thị danh sách hàng hóa trong giỏ
         if st.session_state.cart:
             st.write("---")
             st.write("📋 **Danh sách hàng chờ báo giá:**")
             
-            # Hiển thị bảng
             cart_df = pd.DataFrame(st.session_state.cart)
-            # Format tiền cho đẹp
             display_df = cart_df.copy()
             display_df['price'] = display_df['price'].apply(format_currency)
             display_df['total'] = display_df['total'].apply(format_currency)
             display_df.columns = ["Tên hàng", "Số lượng", "Đơn giá", "Thành tiền"]
             
             st.table(display_df)
-            
-            # Tính tổng
             total_order = sum(item['total'] for item in st.session_state.cart)
-            st.metric(label="TỔNG GIÁ TRỊ ĐƠN HÀNG", value=f"{format_currency(total_order)} VNĐ")
+            st.metric(label="TỔNG GIÁ TRỊ", value=f"{format_currency(total_order)} VNĐ")
             
-            # Nút Xóa giỏ hàng
             if st.button("🗑️ Xóa làm lại"):
                 st.session_state.cart = []
                 st.rerun()
 
-            # 4. Nút Lưu Báo Giá
             st.write("---")
             if st.button("💾 LƯU BÁO GIÁ", type="primary", use_container_width=True):
                 if not name:
@@ -314,30 +341,19 @@ def main():
                         "items": st.session_state.cart,
                         "financial": {"total": total_order, "paid": 0, "debt": total_order, "staff": staff}
                     }
-                    
                     if add_new_order(new_order):
-                        # Lưu thành công -> Lưu vào session để in và reset cart
                         st.session_state.last_order = new_order
-                        st.session_state.cart = [] # Xóa giỏ hàng
-                        st.rerun() # Load lại trang để hiện nút in
+                        st.session_state.cart = []
+                        st.rerun()
 
-        # 5. Khu vực thông báo thành công và Nút In (Hiện sau khi reload)
         if st.session_state.last_order:
-            st.success(f"✅ Đã tạo thành công đơn hàng: **{st.session_state.last_order['order_id']}**")
-            
-            # Tạo PDF ngay lập tức
+            st.success(f"✅ Đã tạo đơn: **{st.session_state.last_order['order_id']}**")
             pdf_bytes = create_pdf(st.session_state.last_order, "BÁO GIÁ")
             
-            col_print, col_new = st.columns(2)
-            with col_print:
-                st.download_button(
-                    label="🖨️ Tải File Báo Giá (PDF)",
-                    data=pdf_bytes,
-                    file_name=f"BG_{st.session_state.last_order['order_id']}.pdf",
-                    mime="application/pdf",
-                    type="primary"
-                )
-            with col_new:
+            c_print, c_new = st.columns(2)
+            with c_print:
+                st.download_button("🖨️ Tải Báo Giá PDF", pdf_bytes, f"BG_{st.session_state.last_order['order_id']}.pdf", "application/pdf", type="primary")
+            with c_new:
                 if st.button("Tạo đơn mới"):
                     st.session_state.last_order = None
                     st.rerun()
@@ -347,7 +363,6 @@ def main():
         all_orders = fetch_all_orders()
         tabs = st.tabs(["1️⃣ Báo Giá", "2️⃣ Thiết Kế", "3️⃣ Sản Xuất", "4️⃣ Giao Hàng", "5️⃣ Công Nợ", "✅ Hoàn Thành"])
         
-        # 1. BÁO GIÁ
         with tabs[0]:
             orders = [o for o in all_orders if o.get('status') == 'Báo giá']
             if not orders: st.info("Trống.")
@@ -358,12 +373,11 @@ def main():
                 with st.expander(f"📄 {oid} | {cname} | {format_currency(total)}"):
                     c1, c2 = st.columns(2)
                     pdf = create_pdf(o, "BÁO GIÁ")
-                    if pdf: c1.download_button("🖨️ Tải PDF", pdf, f"BG_{oid}.pdf", mime="application/pdf")
+                    if pdf: c1.download_button("🖨️ Tải PDF", pdf, f"BG_{oid}.pdf", "application/pdf")
                     if c2.button("✅ Duyệt -> Thiết Kế", key=f"app_{oid}"):
                         update_order_status(oid, "Thiết kế")
                         st.rerun()
 
-        # 2. THIẾT KẾ
         with tabs[1]:
             orders = [o for o in all_orders if o.get('status') == 'Thiết kế']
             if not orders: st.info("Trống.")
@@ -375,7 +389,6 @@ def main():
                         update_order_status(oid, "Sản xuất")
                         st.rerun()
 
-        # 3. SẢN XUẤT
         with tabs[2]:
             orders = [o for o in all_orders if o.get('status') == 'Sản xuất']
             if not orders: st.info("Trống.")
@@ -387,7 +400,6 @@ def main():
                         update_order_status(oid, "Giao hàng")
                         st.rerun()
 
-        # 4. GIAO HÀNG
         with tabs[3]:
             orders = [o for o in all_orders if o.get('status') == 'Giao hàng']
             if not orders: st.info("Trống.")
@@ -397,12 +409,11 @@ def main():
                 with st.expander(f"🚚 {oid} | {cname}"):
                     c1, c2 = st.columns(2)
                     pdf_gh = create_pdf(o, "PHIẾU GIAO HÀNG")
-                    if pdf_gh: c1.download_button("🖨️ In Phiếu Giao", pdf_gh, f"GH_{oid}.pdf", mime="application/pdf")
+                    if pdf_gh: c1.download_button("🖨️ In Phiếu Giao", pdf_gh, f"GH_{oid}.pdf", "application/pdf")
                     if c2.button("✅ Giao Xong -> Công Nợ", key=f"del_{oid}"):
                         update_order_status(oid, "Công nợ")
                         st.rerun()
 
-        # 5. CÔNG NỢ
         with tabs[4]:
             orders = [o for o in all_orders if o.get('status') == 'Công nợ']
             if not orders: st.info("Hết nợ.")
@@ -423,7 +434,6 @@ def main():
                         time.sleep(1)
                         st.rerun()
 
-        # 6. HOÀN THÀNH
         with tabs[5]:
             orders = [o for o in all_orders if o.get('status') == 'Hoàn thành']
             if orders:
