@@ -1,15 +1,22 @@
 import streamlit as st
 import pandas as pd
 import json
+import os
 from datetime import datetime
 from fpdf import FPDF
 from docxtpl import DocxTemplate
+import plotly.express as px
 from num2words import num2words
-from streamlit_gsheets import GSheetsConnection
+import gspread
+from google.oauth2.service_account import Credentials
 
 # --- CẤU HÌNH HỆ THỐNG ---
+# Thay vì dùng file local, ta dùng URL Google Sheet
 TEMPLATE_CONTRACT = 'Hop dong .docx' 
 FONT_PATH = 'Arial.ttf'
+
+# [QUAN TRỌNG] DÁN LINK GOOGLE SHEET CỦA BẠN VÀO DƯỚI ĐÂY:
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit" 
 
 # --- HÀM TIỆN ÍCH ---
 def format_currency(value):
@@ -26,47 +33,78 @@ def read_money(amount):
     except:
         return "..................... đồng."
 
-# --- QUẢN LÝ DATABASE (KẾT NỐI QUA SECRETS) ---
-def get_db_connection():
-    # Code này cực ngắn vì nó tự động lấy thông tin từ Secrets bạn đã cấu hình ở Bước 2
+# --- KẾT NỐI GOOGLE SHEETS (THAY THẾ FILE LOCAL) ---
+@st.cache_resource
+def get_gspread_client():
     try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        return conn
+        # Kiểm tra xem secrets đã được cấu hình chưa
+        if "service_account" not in st.secrets:
+            st.error("⚠️ Chưa cấu hình Secrets! Vui lòng vào Settings -> Secrets để dán thông tin JSON.")
+            return None
+
+        # Lấy thông tin từ Secrets
+        creds_dict = dict(st.secrets["service_account"])
+
+        # Tự động sửa lỗi xuống dòng trong Private Key (Fix lỗi Invalid JWT)
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+
+        scope = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+        client = gspread.authorize(creds)
+        return client
     except Exception as e:
-        st.error(f"Lỗi kết nối: {e}")
+        st.error(f"Lỗi xác thực Google: {e}")
         return None
 
+# --- QUẢN LÝ DATABASE (ĐÃ UPDATE SANG GOOGLE SHEETS) ---
 def load_db():
+    client = get_gspread_client()
+    if not client: return []
     try:
-        conn = get_db_connection()
-        # Không cần truyền URL nữa nếu đã để trong secrets, 
-        # nhưng để chắc chắn ta vẫn có thể gọi lại hoặc để mặc định
-        df = conn.read(worksheet="Orders", ttl=0)
-        
-        if df.empty: return []
+        sh = client.open_by_url(SHEET_URL)
+        worksheet = sh.worksheet("Orders")
+        all_records = worksheet.get_all_records()
         
         data = []
-        for _, row in df.iterrows():
-            item = row.to_dict()
+        for item in all_records:
             try:
-                if isinstance(item.get('customer'), str): item['customer'] = json.loads(item['customer'])
-                if isinstance(item.get('items'), str): item['items'] = json.loads(item['items'])
-                if isinstance(item.get('financial'), str): item['financial'] = json.loads(item['financial'])
-            except: continue
-            data.append(item)
+                # Parse JSON từ các cột lưu trữ dạng string
+                if isinstance(item.get('customer'), str) and item['customer']:
+                    item['customer'] = json.loads(item['customer'])
+                if isinstance(item.get('items'), str) and item['items']:
+                    item['items'] = json.loads(item['items'])
+                if isinstance(item.get('financial'), str) and item['financial']:
+                    item['financial'] = json.loads(item['financial'])
+                data.append(item)
+            except:
+                continue
         return data
+    except gspread.WorksheetNotFound:
+        return [] # Trả về rỗng nếu chưa có sheet
     except Exception as e:
-        # st.error(f"Lỗi tải DB: {e}") # Có thể ẩn lỗi nếu chưa có dữ liệu
+        # st.error(f"Lỗi tải DB: {e}")
         return []
 
 def save_db(data):
+    client = get_gspread_client()
+    if not client: return
     try:
-        conn = get_db_connection()
+        sh = client.open_by_url(SHEET_URL)
+        try:
+            worksheet = sh.worksheet("Orders")
+        except:
+            worksheet = sh.add_worksheet(title="Orders", rows=1000, cols=20)
+
         if not data:
-            df = pd.DataFrame()
-            conn.update(worksheet="Orders", data=df)
+            worksheet.clear()
             return
 
+        # Chuẩn bị dữ liệu (Dump JSON object thành string để lưu vào Sheet)
         data_to_save = []
         for item in data:
             clean_item = item.copy()
@@ -74,26 +112,46 @@ def save_db(data):
             clean_item['items'] = json.dumps(item['items'], ensure_ascii=False)
             clean_item['financial'] = json.dumps(item['financial'], ensure_ascii=False)
             data_to_save.append(clean_item)
-            
+        
         df = pd.DataFrame(data_to_save)
-        conn.update(worksheet="Orders", data=df)
+        
+        worksheet.clear()
+        if not df.empty:
+            # Update cả header và values
+            worksheet.update([df.columns.values.tolist()] + df.values.tolist())
         st.cache_data.clear()
     except Exception as e:
         st.error(f"Lỗi lưu Database: {e}")
 
 def load_cash():
+    client = get_gspread_client()
+    if not client: return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
     try:
-        conn = get_db_connection()
-        df = conn.read(worksheet="Cashbook", ttl=0)
-        if df.empty: return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
-        return df
+        sh = client.open_by_url(SHEET_URL)
+        worksheet = sh.worksheet("Cashbook")
+        data = worksheet.get_all_records()
+        if not data:
+            return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
+        return pd.DataFrame(data)
     except:
         return pd.DataFrame(columns=["Ngày", "Nội dung", "Loại", "Số tiền", "Ghi chú"])
 
 def save_cash(df):
+    client = get_gspread_client()
+    if not client: return
     try:
-        conn = get_db_connection()
-        conn.update(worksheet="Cashbook", data=df)
+        sh = client.open_by_url(SHEET_URL)
+        try:
+            worksheet = sh.worksheet("Cashbook")
+        except:
+            worksheet = sh.add_worksheet(title="Cashbook", rows=1000, cols=10)
+        
+        worksheet.clear()
+        if not df.empty:
+            # Chuyển ngày thành string để tránh lỗi
+            df_save = df.copy()
+            df_save['Ngày'] = df_save['Ngày'].astype(str)
+            worksheet.update([df_save.columns.values.tolist()] + df_save.values.tolist())
         st.cache_data.clear()
     except Exception as e:
         st.error(f"Lỗi lưu Sổ quỹ: {e}")
@@ -105,12 +163,11 @@ def generate_order_id():
     count = 0
     if data:
         for item in data:
-            if item.get('order_id', '').endswith(f".{year_suffix}"):
+            if isinstance(item, dict) and item.get('order_id', '').endswith(f".{year_suffix}"):
                 count += 1
     return f"{count + 1:03d}/ĐHALP.{year_suffix}"
 
-# --- XUẤT PDF & WORD ---
-# (Giữ nguyên các hàm create_pdf, create_contract, class PDFReport như cũ)
+# --- XUẤT PDF ---
 class PDFReport(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 16)
@@ -200,6 +257,7 @@ def create_pdf(order, doc_type="BÁO GIÁ"):
     pdf.cell(95, 10, "NHÀ CUNG CẤP", 0, 1, 'C')
     return bytes(pdf.output())
 
+# --- XUẤT WORD ---
 def create_contract(order):
     try:
         doc = DocxTemplate(TEMPLATE_CONTRACT)
@@ -228,7 +286,7 @@ def create_contract(order):
     except Exception as e:
         return None
 
-# --- ĐĂNG NHẬP & APP CHÍNH ---
+# --- MÀN HÌNH ĐĂNG NHẬP ---
 def login_screen():
     st.title("🔐 Đăng Nhập Hệ Thống")
     c1, c2, c3 = st.columns([1, 2, 1])
@@ -237,27 +295,31 @@ def login_screen():
             username = st.text_input("Tên đăng nhập")
             password = st.text_input("Mật khẩu", type="password")
             submitted = st.form_submit_button("Đăng Nhập", use_container_width=True)
+            
             if submitted:
                 if username == "admin" and password == "admin":
                     st.session_state.logged_in = True
-                    st.success("Thành công")
+                    st.success("Đăng nhập thành công!")
                     st.rerun()
                 else:
-                    st.error("Sai thông tin")
+                    st.error("Sai tên đăng nhập hoặc mật khẩu!")
 
+# --- ỨNG DỤNG CHÍNH (DASHBOARD) ---
 def run_app():
     st.sidebar.title(f"👤 Admin")
     if st.sidebar.button("Đăng Xuất"):
         st.session_state.logged_in = False
         st.rerun()
     st.sidebar.markdown("---")
+    
     st.sidebar.title("MENU QUẢN LÝ")
     menu = st.sidebar.radio("Chức năng:", ["1. Lên Đơn Mới / Sửa Đơn", "2. Quản Lý Đơn Hàng", "3. Quản Lý Tiền Mặt", "4. Báo Cáo"])
 
+    # Session State cho giỏ hàng
     if 'cart' not in st.session_state: st.session_state.cart = []
     if 'editing_order' not in st.session_state: st.session_state.editing_order = None
 
-    # MODULE 1: Lên Đơn Mới / Sửa Đơn
+    # --- MODULE 1: TẠO HOẶC SỬA ĐƠN ---
     if menu == "1. Lên Đơn Mới / Sửa Đơn":
         mode = "EDIT" if st.session_state.editing_order else "NEW"
         order_title = st.session_state.editing_order['order_id'] if mode == 'EDIT' else 'TẠO ĐƠN HÀNG MỚI'
@@ -283,7 +345,8 @@ def run_app():
             default_staff_idx = 0
             if mode == "EDIT":
                 saved_staff = st.session_state.editing_order.get('financial', {}).get('staff', '')
-                if saved_staff in staff_opts: default_staff_idx = staff_opts.index(saved_staff)
+                if saved_staff in staff_opts:
+                    default_staff_idx = staff_opts.index(saved_staff)
             staff_name = c6.selectbox("Nhân viên KD", staff_opts, index=default_staff_idx)
 
         st.markdown("---")
@@ -339,21 +402,20 @@ def run_app():
                     if not cust_name:
                         st.error("Thiếu tên khách hàng!")
                     else:
+                        db = load_db()
                         if mode == "NEW":
                             order_id = generate_order_id()
                             status = "Báo giá"
                             created_date = datetime.now().strftime("%d/%m/%Y")
                             comm_status = "Chưa TT"
                             pay_status = "Chưa TT"
-                            data = load_db()
                         else:
                             order_id = st.session_state.editing_order['order_id']
                             status = st.session_state.editing_order['status']
                             created_date = st.session_state.editing_order['date']
                             comm_status = st.session_state.editing_order.get('financial', {}).get('commission_status', 'Chưa TT')
                             pay_status = st.session_state.editing_order.get('payment_status', 'Chưa TT')
-                            data = load_db()
-                            data = [x for x in data if x.get('order_id') != order_id]
+                            db = [x for x in db if x.get('order_id') != order_id]
                         
                         final_order = {
                             "order_id": order_id, "date": created_date, "status": status, "payment_status": pay_status,
@@ -362,8 +424,8 @@ def run_app():
                             "financial": {"total_revenue": grand_total, "total_cost": grand_cost, "profit_net": profit_net, 
                                           "commission": comm_amt, "commission_rate": comm_rate, "staff": staff_name, "commission_status": comm_status}
                         }
-                        data.append(final_order)
-                        save_db(data)
+                        db.append(final_order)
+                        save_db(db)
                         st.session_state.cart = []
                         st.session_state.editing_order = None
                         st.success(f"Đã lưu thành công đơn hàng {order_id}!")
@@ -375,28 +437,120 @@ def run_app():
                         st.session_state.cart = []
                         st.rerun()
 
-    # MODULE 2: Quản Lý Đơn Hàng (Code đã rút gọn để vừa file, logic giữ nguyên)
+    # --- MODULE 2: QUẢN LÝ ĐƠN HÀNG ---
     elif menu == "2. Quản Lý Đơn Hàng":
         st.title("🏭 Quản Lý Đơn Hàng")
         db = load_db()
-        # ... (Phần hiển thị và xử lý đơn hàng tương tự các phiên bản trước)
-        # Để code ngắn gọn tôi chỉ để khung sườn, bạn có thể copy lại phần logic hiển thị từ file cũ nếu cần
+        cols = ["Mã ĐH", "Khách hàng", "Tổng tiền", "Thanh toán", "Hoa hồng", "TT Hoa hồng", "Trạng thái", "NV"]
+        view_data = []
         if db:
-            cols = ["Mã ĐH", "Khách hàng", "Tổng tiền", "Thanh toán", "Trạng thái"]
-            view_data = []
             for o in db:
                 view_data.append({
                     "Mã ĐH": o.get('order_id', ''),
                     "Khách hàng": o.get('customer', {}).get('name', ''),
-                    "Tổng tiền": format_currency(o.get('financial', {}).get('total_revenue', 0)),
+                    "Tổng tiền": o.get('financial', {}).get('total_revenue', 0),
                     "Thanh toán": o.get('payment_status', 'Chưa TT'),
-                    "Trạng thái": o.get('status', 'Báo giá')
+                    "Hoa hồng": o.get('financial', {}).get('commission', 0),
+                    "TT Hoa hồng": o.get('financial', {}).get('commission_status', 'Chưa TT'),
+                    "Trạng thái": o.get('status', 'Báo giá'),
+                    "NV": o.get('financial', {}).get('staff', '')
                 })
-            st.dataframe(pd.DataFrame(view_data), use_container_width=True)
-        else:
-            st.info("Chưa có đơn hàng nào.")
+        df_view = pd.DataFrame(view_data, columns=cols)
+        tab_names = ["Tất cả", "Báo giá", "Thiết kế", "Sản xuất", "Giao hàng", "Hoàn thành"]
+        tabs = st.tabs(tab_names) 
+        
+        for i, tab_obj in enumerate(tabs):
+            current_tab_name = tab_names[i]
+            with tab_obj:
+                if df_view.empty:
+                    curr_df = pd.DataFrame(columns=cols)
+                else:
+                    if current_tab_name == "Tất cả": curr_df = df_view
+                    else: curr_df = df_view[df_view['Trạng thái'] == current_tab_name] if 'Trạng thái' in df_view.columns else pd.DataFrame(columns=cols)
 
-    # MODULE 3: Quản Lý Tiền Mặt
+                if not curr_df.empty:
+                    show_df = curr_df.copy()
+                    show_df['Tổng tiền'] = show_df['Tổng tiền'].apply(format_currency)
+                    show_df['Hoa hồng'] = show_df['Hoa hồng'].apply(format_currency)
+                    st.dataframe(show_df, use_container_width=True)
+                    
+                    st.write("---")
+                    c1, c2 = st.columns([1, 2])
+                    with c1:
+                        sel_id = st.selectbox(f"Chọn đơn hàng ({current_tab_name})", curr_df['Mã ĐH'].unique(), key=f"s_{i}")
+                    if sel_id:
+                        order_obj = next((x for x in db if x.get('order_id') == sel_id), None)
+                        if order_obj:
+                            with c2:
+                                st.subheader(f"Thao tác: {sel_id}")
+                                b1, b2, b3 = st.columns(3)
+                                if b1.button("✏️ Sửa Đơn", key=f"ed_{sel_id}_{i}"):
+                                    st.session_state.editing_order = order_obj
+                                    st.session_state.cart = []
+                                    st.success(f"Chuyển sang sửa {sel_id}. Qua Tab 1.")
+                                if b2.button("🗑️ Xóa Đơn", key=f"dl_{sel_id}_{i}"):
+                                    if order_obj.get('status') == "Báo giá":
+                                        new_db = [x for x in db if x.get('order_id') != sel_id]
+                                        save_db(new_db)
+                                        st.success("Đã xóa!")
+                                        st.rerun()
+                                    else: st.error("Chỉ xóa đơn 'Báo giá'")
+                                steps = ["Báo giá", "Thiết kế", "Sản xuất", "Giao hàng", "Hoàn thành"]
+                                curr_st = order_obj.get('status', 'Báo giá')
+                                if curr_st in steps and steps.index(curr_st) < len(steps)-1:
+                                    next_st = steps[steps.index(curr_st) + 1]
+                                    if b3.button(f"⏩ Sang {next_st}", key=f"mv_{sel_id}_{i}"):
+                                        order_obj['status'] = next_st
+                                        save_db(db)
+                                        st.rerun()
+                                
+                                st.markdown("---")
+                                c_fin1, c_fin2 = st.columns(2)
+                                with c_fin1:
+                                    st.write("**Khách Thanh Toán:**")
+                                    pay_stat = order_obj.get('payment_status', 'Chưa TT')
+                                    st.caption(f"Trạng thái: {pay_stat}")
+                                    if pay_stat == 'Chưa TT':
+                                        if st.button("✅ Xác nhận Khách Đã Trả", key=f"pay_c_{sel_id}_{i}"):
+                                            order_obj['payment_status'] = 'Đã TT'
+                                            save_db(db)
+                                            st.rerun()
+                                    else:
+                                        if st.button("❌ Hủy xác nhận", key=f"unpay_c_{sel_id}_{i}"):
+                                            order_obj['payment_status'] = 'Chưa TT'
+                                            save_db(db)
+                                            st.rerun()
+                                with c_fin2:
+                                    st.write("**Chi Hoa Hồng:**")
+                                    comm_stat = order_obj.get('financial', {}).get('commission_status', 'Chưa TT')
+                                    st.caption(f"Trạng thái: {comm_stat}")
+                                    if comm_stat == 'Chưa TT':
+                                        if st.button("💰 Xác nhận Đã Chi HH", key=f"pay_hh_{sel_id}_{i}"):
+                                            order_obj['financial']['commission_status'] = 'Đã TT'
+                                            save_db(db)
+                                            st.rerun()
+                                    else:
+                                        if st.button("↩️ Hủy xác nhận Chi HH", key=f"unpay_hh_{sel_id}_{i}"):
+                                            order_obj['financial']['commission_status'] = 'Chưa TT'
+                                            save_db(db)
+                                            st.rerun()
+                                
+                                st.markdown("---")
+                                p1, p2, p3 = st.columns(3)
+                                with p1:
+                                    pdf_bg = create_pdf(order_obj, "BÁO GIÁ")
+                                    if pdf_bg: st.download_button("📄 Báo Giá", pdf_bg, f"BG_{sel_id.replace('/','_')}.pdf", key=f"btn_bg_{sel_id}_{i}")
+                                with p2:
+                                    doc_hd = create_contract(order_obj)
+                                    if doc_hd: st.download_button("📝 Hợp Đồng", doc_hd, f"HD_{sel_id.replace('/','_')}.docx", key=f"btn_hd_{sel_id}_{i}")
+                                with p3:
+                                    if order_obj.get('status') in ["Giao hàng", "Hoàn thành"]:
+                                        pdf_gh = create_pdf(order_obj, "PHIẾU GIAO HÀNG")
+                                        if pdf_gh: st.download_button("🚚 Phiếu GH", pdf_gh, f"PGH_{sel_id.replace('/','_')}.pdf", key=f"btn_gh_{sel_id}_{i}")
+                else:
+                    if not df_view.empty: st.info(f"Không có đơn hàng nào ở trạng thái {current_tab_name}")
+
+    # --- MODULE 3: TIỀN MẶT ---
     elif menu == "3. Quản Lý Tiền Mặt":
         st.title("💰 Sổ Quỹ Tiền Mặt")
         df_cash = load_cash()
@@ -413,12 +567,88 @@ def run_app():
                     save_cash(df_cash)
                     st.success("Đã lưu")
         with c2:
-            st.dataframe(df_cash, use_container_width=True)
+            thu = df_cash[df_cash['Loại']=='Thu']['Số tiền'].sum()
+            chi = df_cash[df_cash['Loại']=='Chi']['Số tiền'].sum()
+            st.metric("Tồn Quỹ", format_currency(thu - chi))
+            if not df_cash.empty:
+                show_cash = df_cash.copy()
+                show_cash['Số tiền'] = show_cash['Số tiền'].apply(format_currency)
+                st.dataframe(show_cash, use_container_width=True)
 
-    # MODULE 4: Báo Cáo (Tương tự)
+    # --- MODULE 4: BÁO CÁO ---
     elif menu == "4. Báo Cáo":
         st.title("📊 Báo Cáo Tổng Hợp")
-        st.info("Tính năng đang cập nhật...")
+        db = load_db()
+        if db:
+            data = []
+            for o in db:
+                financial = o.get('financial', {})
+                data.append({
+                    "NV": financial.get('staff', ''),
+                    "Doanh thu": financial.get('total_revenue', 0),
+                    "Chi phí": financial.get('total_cost', 0),
+                    "Lợi nhuận": financial.get('profit_net', 0),
+                    "Hoa hồng": financial.get('commission', 0),
+                    "TT Hoa hồng": financial.get('commission_status', 'Chưa TT'),
+                    "Thanh toán": o.get('payment_status', 'Chưa TT'),
+                    "Trạng thái": o.get('status', 'Báo giá')
+                })
+            df = pd.DataFrame(data)
+            
+            # 1. TÀI CHÍNH TỔNG QUÁT
+            st.subheader("1. Tài Chính Doanh Nghiệp")
+            total_rev = df['Doanh thu'].sum()
+            total_cost = df['Chi phí'].sum()
+            total_prof = df['Lợi nhuận'].sum()
+            total_debt = df[df['Thanh toán'] == 'Chưa TT']['Doanh thu'].sum()
+
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Doanh Thu", format_currency(total_rev))
+            k2.metric("Chi Phí", format_currency(total_cost))
+            k3.metric("Lợi Nhuận", format_currency(total_prof))
+            k4.metric("Tổng Công Nợ", format_currency(total_debt), delta="Chưa thu", delta_color="inverse")
+            st.markdown("---")
+
+            # 2. TÌNH HÌNH HOA HỒNG
+            st.subheader("2. Tình Hình Hoa Hồng")
+            df['HH Đã Chi'] = df.apply(lambda x: x['Hoa hồng'] if x['TT Hoa hồng'] == 'Đã TT' else 0, axis=1)
+            df['HH Chưa Chi'] = df.apply(lambda x: x['Hoa hồng'] if x['TT Hoa hồng'] == 'Chưa TT' else 0, axis=1)
+            
+            total_comm = df['Hoa hồng'].sum()
+            paid_comm = df['HH Đã Chi'].sum()
+            unpaid_comm = df['HH Chưa Chi'].sum()
+            
+            h1, h2, h3 = st.columns(3)
+            h1.metric("Tổng Quỹ Hoa Hồng", format_currency(total_comm))
+            h2.metric("Đã Chi Trả", format_currency(paid_comm), delta="Đã TT")
+            h3.metric("Còn Nợ NV", format_currency(unpaid_comm), delta="-Nợ", delta_color="inverse")
+            st.markdown("---")
+
+            # 3. BIỂU ĐỒ & CHI TIẾT
+            g1, g2 = st.columns(2)
+            with g1:
+                st.subheader("Tỷ lệ Trạng Thái Đơn")
+                if not df.empty:
+                    cnt = df['Trạng thái'].value_counts().reset_index()
+                    cnt.columns = ['Trạng thái', 'Số lượng']
+                    fig = px.pie(cnt, values='Số lượng', names='Trạng thái', hole=0.4)
+                    st.plotly_chart(fig, use_container_width=True)
+            with g2:
+                st.subheader("Hiệu Quả Kinh Doanh theo NV")
+                if not df.empty:
+                    grp_nv = df.groupby("NV")[['Doanh thu', 'Hoa hồng']].sum().reset_index()
+                    fig_bar = px.bar(grp_nv, x="NV", y="Doanh thu", text_auto='.2s')
+                    st.plotly_chart(fig_bar, use_container_width=True)
+
+            st.subheader("📋 Chi tiết Hoa hồng từng Nhân viên")
+            if not df.empty:
+                grp_staff = df.groupby("NV")[['Doanh thu', 'Hoa hồng', 'HH Đã Chi', 'HH Chưa Chi']].sum().reset_index()
+                show_staff = grp_staff.copy()
+                for c in ['Doanh thu', 'Hoa hồng', 'HH Đã Chi', 'HH Chưa Chi']:
+                    show_staff[c] = show_staff[c].apply(format_currency)
+                st.dataframe(show_staff, use_container_width=True)
+        else:
+            st.warning("Chưa có dữ liệu.")
 
 def main():
     st.set_page_config(page_title="Phần Mềm Quản Lý In Ấn ALP", layout="wide", page_icon="🖨️")
