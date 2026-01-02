@@ -15,7 +15,7 @@ from google.oauth2.service_account import Credentials
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit"
 FONT_FILENAME = 'arial.ttf' 
 
-# --- HÀM HỖ TRỢ ---
+# --- HÀM HỖ TRỢ CƠ BẢN ---
 def remove_accents(input_str):
     if not input_str: return ""
     input_str = str(input_str)
@@ -36,7 +36,8 @@ def read_money_vietnamese(amount):
 @st.cache_resource
 def get_gspread_client():
     try:
-        if "service_account" not in st.secrets: return None
+        if "service_account" not in st.secrets:
+            return None
         creds_dict = dict(st.secrets["service_account"])
         if "private_key" in creds_dict:
             creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
@@ -92,29 +93,9 @@ def update_order_status(order_id, new_status, new_payment_status=None, paid_amou
         return True
     except: return False
 
-def update_commission_status(order_id, status_text):
-    """Cập nhật trạng thái hoa hồng"""
-    client = get_gspread_client()
-    if not client: return False
-    try:
-        sh = client.open_by_url(SHEET_URL)
-        ws = sh.worksheet("Orders")
-        cell = ws.find(order_id)
-        if not cell: return False
-        
-        row_idx = cell.row
-        old_fin_str = ws.cell(row_idx, 7).value
-        try: fin = json.loads(old_fin_str)
-        except: fin = {}
-        
-        fin['commission_status'] = status_text # Thêm/Cập nhật trạng thái hoa hồng
-        
-        ws.update_cell(row_idx, 7, json.dumps(fin, ensure_ascii=False))
-        st.cache_data.clear()
-        return True
-    except: return False
-
+# --- TÍNH NĂNG MỚI: XÓA VÀ SỬA ---
 def delete_order(order_id):
+    """Xóa hoàn toàn dòng chứa đơn hàng"""
     client = get_gspread_client()
     if not client: return False
     try:
@@ -126,9 +107,12 @@ def delete_order(order_id):
             st.cache_data.clear()
             return True
         return False
-    except: return False
+    except Exception as e:
+        st.error(f"Lỗi xóa: {e}")
+        return False
 
 def edit_order_info(order_id, new_cust, new_total, new_items):
+    """Cập nhật thông tin đơn hàng"""
     client = get_gspread_client()
     if not client: return False
     try:
@@ -136,18 +120,31 @@ def edit_order_info(order_id, new_cust, new_total, new_items):
         ws = sh.worksheet("Orders")
         cell = ws.find(order_id)
         if not cell: return False
+        
         r = cell.row
+        
+        # Cập nhật Customer (Cột 5 - E)
         ws.update_cell(r, 5, json.dumps(new_cust, ensure_ascii=False))
+        
+        # Cập nhật Items (Cột 6 - F)
         ws.update_cell(r, 6, json.dumps(new_items, ensure_ascii=False))
+
+        # Cập nhật Financial (Cột 7 - G)
+        # Phải lấy data cũ để giữ lại số tiền đã thanh toán (paid)
         old_fin_str = ws.cell(r, 7).value
         try: fin = json.loads(old_fin_str)
         except: fin = {}
+        
         fin['total'] = new_total
-        fin['debt'] = new_total - float(fin.get('paid', 0))
+        fin['debt'] = new_total - float(fin.get('paid', 0)) # Tính lại nợ
+        
         ws.update_cell(r, 7, json.dumps(fin, ensure_ascii=False))
+        
         st.cache_data.clear()
         return True
-    except: return False
+    except Exception as e:
+        st.error(f"Lỗi sửa: {e}")
+        return False
 
 def add_new_order(order_data):
     client = get_gspread_client()
@@ -202,7 +199,8 @@ def gen_id():
 
 # --- PDF GENERATOR ---
 class PDFGen(FPDF):
-    def header(self): pass
+    def header(self):
+        pass
 
 def create_pdf(order, title):
     pdf = PDFGen()
@@ -215,6 +213,7 @@ def create_pdf(order, title):
             pdf.set_font('ArialLocal', '', 11)
         except: SAFE_MODE = True
     else: SAFE_MODE = True
+
     if SAFE_MODE: pdf.set_font('Helvetica', '', 11)
 
     def txt(text):
@@ -225,17 +224,17 @@ def create_pdf(order, title):
     pdf.set_font_size(14)
     pdf.cell(0, 10, txt('CÔNG TY IN ẤN AN LỘC PHÁT'), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.ln(5)
+
     pdf.set_font_size(16)
     pdf.cell(0, 10, txt(title), new_x="LMARGIN", new_y="NEXT", align='C')
-    pdf.set_font_size(11)
     
+    pdf.set_font_size(11)
     oid = order.get('order_id', '')
     odate = order.get('date', '')
-    cust = order.get('customer', {})
-    items = order.get('items', [])
-    
     pdf.cell(0, 8, txt(f"Mã: {oid} | Ngày: {odate}"), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.ln(5)
+    
+    cust = order.get('customer', {})
     pdf.cell(0, 7, txt(f"Khách hàng: {cust.get('name', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 7, txt(f"SĐT: {cust.get('phone', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 7, txt(f"Địa chỉ: {cust.get('address', '')}"), new_x="LMARGIN", new_y="NEXT")
@@ -249,10 +248,12 @@ def create_pdf(order, title):
     pdf.cell(40, 8, txt("Thành tiền"), border=1, align='C', fill=True, new_x="LMARGIN", new_y="NEXT")
     
     total = 0
+    items = order.get('items', [])
     for i, item in enumerate(items):
         try: val = float(item.get('total', 0))
         except: val = 0
         total += val
+        
         pdf.cell(10, 8, str(i+1), border=1, align='C')
         pdf.cell(90, 8, txt(item.get('name', '')), border=1)
         pdf.cell(20, 8, txt(str(item.get('qty', 0))), border=1, align='C')
@@ -280,8 +281,10 @@ def main():
     if 'cart' not in st.session_state: st.session_state.cart = []
     if 'last_order' not in st.session_state: st.session_state.last_order = None
 
+    # --- TAB 1: TẠO BÁO GIÁ ---
     if menu == "1. Tạo Báo Giá":
         st.title("📝 Tạo Báo Giá Mới")
+        
         st.subheader("1. Thông tin khách hàng")
         c1, c2 = st.columns(2)
         name = c1.text_input("Tên Khách Hàng", key="in_name")
@@ -298,19 +301,16 @@ def main():
             i_price = c5.number_input("Đơn giá", 0.0, step=1000.0)
             if st.form_submit_button("➕ Thêm vào danh sách"):
                 if i_name:
-                    st.session_state.cart.append({"name": i_name, "qty": i_qty, "price": i_price, "total": i_qty*i_price})
+                    st.session_state.cart.append({
+                        "name": i_name, "qty": i_qty, "price": i_price, "total": i_qty*i_price
+                    })
                     st.rerun()
                 else: st.error("Nhập tên hàng!")
 
         if st.session_state.cart:
             st.write("---")
             cart_df = pd.DataFrame(st.session_state.cart)
-            view_df = cart_df.copy()
-            view_df['price'] = view_df['price'].apply(format_currency)
-            view_df['total'] = view_df['total'].apply(format_currency)
-            view_df.columns = ["Tên hàng", "SL", "Đơn giá", "Thành tiền"]
-            st.table(view_df)
-            
+            st.table(cart_df)
             total = sum(i['total'] for i in st.session_state.cart)
             st.metric("TỔNG TIỀN", format_currency(total))
             
@@ -318,6 +318,7 @@ def main():
             if c_del.button("🗑️ Xóa giỏ"):
                 st.session_state.cart = []
                 st.rerun()
+            
             if c_save.button("💾 LƯU BÁO GIÁ", type="primary"):
                 if not name: st.error("Thiếu tên khách!")
                 else:
@@ -326,7 +327,7 @@ def main():
                         "status": "Báo giá", "payment_status": "Chưa TT",
                         "customer": {"name": name, "phone": phone, "address": addr},
                         "items": st.session_state.cart,
-                        "financial": {"total": total, "paid": 0, "debt": total, "staff": staff, "commission_status": "Chưa chi"}
+                        "financial": {"total": total, "paid": 0, "debt": total, "staff": staff}
                     }
                     if add_new_order(new_order):
                         st.session_state.last_order = new_order
@@ -339,6 +340,7 @@ def main():
             pdf_bytes = create_pdf(st.session_state.last_order, "BÁO GIÁ")
             st.download_button("🖨️ Tải PDF", pdf_bytes, f"BG_{oid}.pdf", "application/pdf", type="primary")
 
+    # --- TAB 2: PIPELINE (ĐÃ THÊM SỬA & XÓA) ---
     elif menu == "2. Quản Lý Đơn Hàng (Pipeline)":
         st.title("🏭 Quy Trình Sản Xuất")
         all_orders = fetch_all_orders()
@@ -353,102 +355,53 @@ def main():
                 cust = o.get('customer', {})
                 items = o.get('items', [])
                 fin = o.get('financial', {})
+                total = fin.get('total', 0)
                 
-                # Tính toán hiển thị
-                total = float(fin.get('total', 0))
-                paid = float(fin.get('paid', 0))
-                debt = total - paid
-                pay_stat = o.get('payment_status', 'Chưa TT')
-                comm_stat = fin.get('commission_status', 'Chưa chi')
-
-                # HIỂN THỊ CHI TIẾT ĐẦY ĐỦ
-                with st.expander(f"📄 {oid} | {cust.get('name')} | Còn lại: {format_currency(debt)}"):
+                with st.expander(f"📄 {oid} | {cust.get('name')} | {format_currency(total)}"):
+                    # 1. Hàng nút chức năng chính
+                    c1, c2, c3, c4 = st.columns(4)
                     
-                    # 1. Thông tin chi tiết 3 cột
-                    col_info, col_items, col_money = st.columns([1.5, 2, 1.5])
-                    
-                    with col_info:
-                        st.write("👤 **Khách hàng:**")
-                        st.caption(f"Tên: {cust.get('name')}")
-                        st.caption(f"SĐT: {cust.get('phone')}")
-                        st.caption(f"ĐC: {cust.get('address')}")
-                        st.write(f"📅 Ngày: {o.get('date')}")
-                        st.write(f"🔄 Trạng thái: **{status_filter}**")
-
-                    with col_items:
-                        st.write("📦 **Hàng hóa:**")
-                        if items:
-                            df_items = pd.DataFrame(items)
-                            df_items['price'] = df_items['price'].apply(format_currency)
-                            df_items['total'] = df_items['total'].apply(format_currency)
-                            df_items.columns = ["Tên hàng", "SL", "Đơn giá", "Thành tiền"]
-                            st.dataframe(df_items, hide_index=True, use_container_width=True)
-
-                    with col_money:
-                        st.write("💰 **Tài chính:**")
-                        st.write(f"Tổng tiền: **{format_currency(total)}**")
-                        st.write(f"Đã cọc/TT: {format_currency(paid)}")
-                        st.write(f"-----------------")
-                        st.write(f"👉 **CÒN LẠI: {format_currency(debt)}**")
-                        
-                        # Tag trạng thái thanh toán
-                        if pay_stat == "Đã TT": st.success(f"TT: {pay_stat}")
-                        elif pay_stat == "Cọc": st.warning(f"TT: {pay_stat}")
-                        else: st.error(f"TT: {pay_stat}")
-
-                        # Tag hoa hồng
-                        st.write(f"🌹 **Hoa hồng:**")
-                        if comm_stat == "Đã chi":
-                            st.success("Đã chi")
-                        else:
-                            st.warning("Chưa chi")
-                            if st.button("Xác nhận chi HH", key=f"comm_{oid}"):
-                                update_commission_status(oid, "Đã chi")
-                                st.rerun()
-
-                    st.divider()
-
-                    # 2. Hàng nút chức năng
-                    c_act1, c_act2, c_act3, c_act4 = st.columns(4)
-                    
-                    # Nút in
+                    # Nút in (nếu có)
                     if pdf_type:
                         pdf = create_pdf(o, pdf_type)
-                        c_act1.download_button(f"🖨️ In {pdf_type}", pdf, f"{oid}.pdf", "application/pdf")
+                        c1.download_button(f"🖨️ In PDF", pdf, f"{oid}.pdf", "application/pdf")
                     
                     # Nút chuyển trạng thái
                     if next_status:
-                        if c_act2.button(btn_text, key=f"mv_{oid}"):
+                        if c2.button(btn_text, key=f"mv_{oid}"):
                             update_order_status(oid, next_status)
                             st.rerun()
                             
-                    # Sửa đơn hàng
-                    with st.expander("✏️ Sửa Đơn Hàng"):
+                    # --- PHẦN MỚI: SỬA ĐƠN HÀNG ---
+                    with st.expander("✏️ CHỈNH SỬA THÔNG TIN"):
                         with st.form(f"edit_{oid}"):
-                            e_name = st.text_input("Tên", value=cust.get('name'))
-                            e_phone = st.text_input("SĐT", value=cust.get('phone'))
-                            e_addr = st.text_input("ĐC", value=cust.get('address'))
-                            e_total = st.number_input("Tổng tiền mới", value=float(total), step=1000.0)
+                            e_name = st.text_input("Tên khách", value=cust.get('name', ''))
+                            e_phone = st.text_input("SĐT", value=cust.get('phone', ''))
+                            e_addr = st.text_input("Địa chỉ", value=cust.get('address', ''))
+                            e_total = st.number_input("Tổng tiền (Điều chỉnh giá)", value=float(total), step=1000.0)
                             
-                            # Sửa món đầu tiên đại diện
-                            first_item = items[0]['name'] if items else ""
-                            e_item = st.text_input("Tên hàng (Sửa nhanh)", value=first_item)
+                            # Chỉnh sửa Item (Cơ bản: chỉ sửa tên món đầu tiên hoặc ghi chú chung)
+                            # Để đơn giản trên giao diện, ta cho phép sửa món hàng đầu tiên đại diện
+                            first_item_name = items[0]['name'] if items else ""
+                            e_item_name = st.text_input("Tên hàng hóa (Chính)", value=first_item_name)
                             
                             if st.form_submit_button("Lưu Thay Đổi"):
-                                new_c = {"name": e_name, "phone": e_phone, "address": e_addr}
-                                new_i = items
-                                if new_i: new_i[0]['name'] = e_item
-                                else: new_i = [{"name": e_item, "qty": 1, "price": e_total, "total": e_total}]
+                                new_cust = {"name": e_name, "phone": e_phone, "address": e_addr}
                                 
-                                if edit_order_info(oid, new_c, e_total, new_i):
-                                    st.success("Xong!")
+                                # Cập nhật items
+                                new_items = items
+                                if new_items: new_items[0]['name'] = e_item_name
+                                else: new_items = [{"name": e_item_name, "qty": 1, "price": e_total, "total": e_total}]
+
+                                if edit_order_info(oid, new_cust, e_total, new_items):
+                                    st.success("Đã cập nhật!")
                                     time.sleep(1)
                                     st.rerun()
                     
-                    # Xóa đơn hàng
-                    if st.button("🗑️ XÓA ĐƠN", key=f"del_{oid}", type="primary"):
+                    # --- PHẦN MỚI: XÓA ĐƠN HÀNG ---
+                    if st.button("🗑️ XÓA ĐƠN NÀY", key=f"del_{oid}", type="primary"):
                         if delete_order(oid):
-                            st.warning("Đã xóa!")
+                            st.warning(f"Đã xóa đơn {oid}")
                             time.sleep(1)
                             st.rerun()
 
@@ -475,6 +428,7 @@ def main():
                         st.success("Xong!")
                         st.rerun()
                     
+                    # Cũng cho phép xóa ở đây nếu đơn sai
                     if st.button("🗑️ Xóa đơn", key=f"deld_{oid}"):
                          if delete_order(oid): st.rerun()
 
@@ -484,6 +438,7 @@ def main():
                 data = [{"Mã": o['order_id'], "Khách": o['customer']['name'], "Tổng": format_currency(o['financial']['total'])} for o in orders]
                 st.dataframe(pd.DataFrame(data), use_container_width=True)
 
+    # --- TAB 3: TÀI CHÍNH ---
     elif menu == "3. Sổ Quỹ & Báo Cáo":
         st.title("📊 Tài Chính")
         tab1, tab2 = st.tabs(["Sổ Quỹ", "Báo Cáo"])
