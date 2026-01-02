@@ -4,7 +4,6 @@ import json
 import time
 import os
 import requests
-import unicodedata
 from datetime import datetime
 from fpdf import FPDF
 from docxtpl import DocxTemplate
@@ -18,7 +17,19 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZM
 TEMPLATE_CONTRACT = 'Hop dong .docx' 
 FONT_FILENAME = 'ARIAL.ttf'
 
-# --- HÀM HỖ TRỢ ---
+# --- HÀM HỖ TRỢ: TẢI FONT (BẮT BUỘC CHO FPDF2) ---
+def check_and_download_font():
+    """Tải font Roboto nếu chưa có"""
+    if not os.path.exists(FONT_FILENAME):
+        try:
+            url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf"
+            response = requests.get(url)
+            with open(FONT_FILENAME, 'wb') as f:
+                f.write(response.content)
+        except Exception as e:
+            st.error(f"Lỗi tải font: {e}")
+
+# --- HÀM HỖ TRỢ TIỀN TỆ ---
 def format_currency(value):
     if value is None: return "0"
     try: return "{:,.0f}".format(float(value))
@@ -27,23 +38,6 @@ def format_currency(value):
 def read_money_vietnamese(amount):
     try: return num2words(amount, lang='vi').capitalize() + " đồng chẵn."
     except: return "..................... đồng."
-
-# --- TẢI FONT (XỬ LÝ LỖI FILE HỎNG) ---
-def check_and_download_font():
-    """Tải font và kiểm tra xem file có hợp lệ không"""
-    url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf"
-    
-    # Nếu file tồn tại nhưng kích thước quá nhỏ (lỗi tải), xóa đi
-    if os.path.exists(FONT_FILENAME) and os.path.getsize(FONT_FILENAME) < 1000:
-        os.remove(FONT_FILENAME)
-        
-    if not os.path.exists(FONT_FILENAME):
-        try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                with open(FONT_FILENAME, 'wb') as f:
-                    f.write(response.content)
-        except: pass
 
 # --- KẾT NỐI GOOGLE SHEETS ---
 @st.cache_resource
@@ -167,84 +161,46 @@ def gen_id():
         if str(o.get('order_id', '')).endswith(year): count += 1
     return f"{count+1:03d}/DH.{year}"
 
-# --- PDF GENERATOR (FIX LỖI CRASH FONT TUYỆT ĐỐI) ---
+# --- PDF GENERATOR ---
 class PDFGen(FPDF):
     def header(self):
-        # Tránh set font ngay tại đây nếu font chưa load được
-        pass
+        check_and_download_font()
+        try:
+            self.add_font('Roboto', '', FONT_FILENAME)
+            self.set_font('Roboto', '', 14)
+            self.cell(0, 10, 'CÔNG TY IN ẤN AN LỘC PHÁT', new_x="LMARGIN", new_y="NEXT", align='C')
+            self.ln(5)
+        except: pass
 
 def create_pdf(order, title):
     pdf = PDFGen()
     pdf.add_page()
-    
-    # 1. Tải Font
     check_and_download_font()
     
-    # 2. Cài đặt font & Chế độ Safe Mode
-    SAFE_MODE = False
     try:
-        # Thử load font Roboto
         pdf.add_font('Roboto', '', FONT_FILENAME)
         pdf.set_font('Roboto', '', 11)
-    except:
-        # Nếu lỗi (do file font hỏng/không tải được), dùng Helvetica và Bật Safe Mode
-        pdf.set_font('Helvetica', '', 11)
-        SAFE_MODE = True
+    except: pdf.set_font('Helvetica', '', 11)
 
-    # 3. Hàm xử lý text bất chấp mọi loại lỗi font
     def txt(text):
-        if not text: return ""
-        text = str(text)
-        
-        if not SAFE_MODE:
-            return text
-        
-        # --- LOGIC SAFE MODE (BỎ DẤU ĐỂ KHÔNG SẬP APP) ---
-        # Thay thế các ký tự đặc biệt tiếng Việt thủ công
-        replacements = {
-            'đ': 'd', 'Đ': 'D',
-            'ă': 'a', 'â': 'a', 'á': 'a', 'à': 'a', 'ả': 'a', 'ã': 'a', 'ạ': 'a',
-            'ê': 'e', 'é': 'e', 'è': 'e', 'ẻ': 'e', 'ẽ': 'e', 'ẹ': 'e',
-            'í': 'i', 'ì': 'i', 'ỉ': 'i', 'ĩ': 'i', 'ị': 'i',
-            'ô': 'o', 'ơ': 'o', 'ó': 'o', 'ò': 'o', 'ỏ': 'o', 'õ': 'o', 'ọ': 'o',
-            'ư': 'u', 'ú': 'u', 'ù': 'u', 'ủ': 'u', 'ũ': 'u', 'ụ': 'u',
-            'ý': 'y', 'ỳ': 'y', 'ỷ': 'y', 'ỹ': 'y', 'ỵ': 'y'
-        }
-        # Bước 1: Thay thế thủ công
-        for k, v in replacements.items():
-            text = text.replace(k, v).replace(k.upper(), v.upper())
-            
-        # Bước 2: Chuẩn hóa unicode và loại bỏ các dấu còn sót
-        text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('ascii')
-        return text
+        return str(text) if text else ""
 
-    # --- NỘI DUNG PDF ---
-    
-    # Header Công Ty
-    # Kiểm tra font riêng cho header
-    header_font = 'Roboto' if not SAFE_MODE else 'Helvetica'
-    pdf.set_font(header_font, '', 14)
-    pdf.cell(0, 10, txt('CÔNG TY IN ẤN AN LỘC PHÁT'), new_x="LMARGIN", new_y="NEXT", align='C')
-    pdf.ln(5)
-
-    # Tiêu đề
-    pdf.set_font_size(16)
-    pdf.cell(0, 10, txt(title), new_x="LMARGIN", new_y="NEXT", align='C')
-    
-    # Thông tin đơn
-    pdf.set_font_size(11)
     oid = order.get('order_id', '')
     odate = order.get('date', '')
-    pdf.cell(0, 8, txt(f"Mã số: {oid} | Ngày: {odate}"), new_x="LMARGIN", new_y="NEXT", align='C')
+    cust = order.get('customer', {})
+    items = order.get('items', [])
+    
+    pdf.set_font_size(16)
+    pdf.cell(0, 10, txt(title), new_x="LMARGIN", new_y="NEXT", align='C')
+    pdf.set_font_size(11)
+    pdf.cell(0, 8, txt(f"Mã: {oid} | Ngày: {odate}"), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.ln(5)
     
-    cust = order.get('customer', {})
     pdf.cell(0, 7, txt(f"Khách hàng: {cust.get('name', '')}"), new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 7, txt(f"Điện thoại: {cust.get('phone', '')}"), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, txt(f"SĐT: {cust.get('phone', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 7, txt(f"Địa chỉ: {cust.get('address', '')}"), new_x="LMARGIN", new_y="NEXT")
     pdf.ln(5)
     
-    # Table Header
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(10, 8, "STT", border=1, align='C', fill=True)
     pdf.cell(90, 8, txt("Tên hàng / Quy cách"), border=1, align='C', fill=True)
@@ -252,9 +208,7 @@ def create_pdf(order, title):
     pdf.cell(30, 8, txt("Đơn giá"), border=1, align='C', fill=True)
     pdf.cell(40, 8, txt("Thành tiền"), border=1, align='C', fill=True, new_x="LMARGIN", new_y="NEXT")
     
-    # Dữ liệu bảng
     total = 0
-    items = order.get('items', [])
     for i, item in enumerate(items):
         try: item_total = float(item.get('total', 0))
         except: item_total = 0
@@ -266,19 +220,13 @@ def create_pdf(order, title):
         pdf.cell(30, 8, format_currency(item.get('price', 0)), border=1, align='R')
         pdf.cell(40, 8, format_currency(item_total), border=1, align='R', new_x="LMARGIN", new_y="NEXT")
     
-    # Tổng cộng
     pdf.cell(150, 8, txt("TỔNG CỘNG:"), border=1, align='R')
     pdf.cell(40, 8, format_currency(total), border=1, align='R', new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(10)
     
-    pdf.ln(5)
-    
-    # Đọc tiền
-    if SAFE_MODE:
-        pdf.multi_cell(0, 8, txt(f"Tong cong: {format_currency(total)} VND"))
-    else:
-        try: money_text = read_money_vietnamese(total)
-        except: money_text = f"{format_currency(total)} đồng."
-        pdf.multi_cell(0, 8, txt(f"Bằng chữ: {money_text}"))
+    try: money_text = read_money_vietnamese(total)
+    except: money_text = f"{format_currency(total)} đồng."
+    pdf.multi_cell(0, 8, txt(f"Bằng chữ: {money_text}"))
     
     return pdf.output()
 
@@ -287,33 +235,112 @@ def main():
     st.set_page_config(page_title="Hệ Thống In Ấn", layout="wide")
     menu = st.sidebar.radio("CHỨC NĂNG", ["1. Tạo Báo Giá", "2. Quản Lý Đơn Hàng (Pipeline)", "3. Sổ Quỹ & Báo Cáo"])
 
+    # Khởi tạo giỏ hàng nếu chưa có
+    if 'cart' not in st.session_state: st.session_state.cart = []
+    if 'last_order' not in st.session_state: st.session_state.last_order = None
+
     if menu == "1. Tạo Báo Giá":
         st.title("📝 Tạo Báo Giá Mới")
-        with st.form("create_order"):
+        
+        # 1. Thông tin khách hàng (Form riêng hoặc input ngoài để không bị reset)
+        with st.container():
+            st.subheader("1. Thông tin khách hàng")
             c1, c2 = st.columns(2)
-            name = c1.text_input("Tên Khách Hàng")
-            phone = c2.text_input("Số Điện Thoại")
-            addr = st.text_input("Địa Chỉ")
-            staff = st.selectbox("Nhân Viên", ["Nam", "Dương", "Thảo", "Khác"])
-            st.divider()
+            name = c1.text_input("Tên Khách Hàng", key="input_name")
+            phone = c2.text_input("Số Điện Thoại", key="input_phone")
+            addr = st.text_input("Địa Chỉ", key="input_addr")
+            staff = st.selectbox("Nhân Viên", ["Nam", "Dương", "Thảo", "Khác"], key="input_staff")
+
+        st.divider()
+        
+        # 2. Form thêm hàng hóa (Tách biệt để có thể thêm nhiều dòng)
+        st.subheader("2. Chi tiết hàng hóa")
+        with st.form("add_item_form", clear_on_submit=True):
             c3, c4, c5 = st.columns([3, 1, 2])
-            i_name = c3.text_input("Tên hàng")
+            i_name = c3.text_input("Tên hàng / Quy cách")
             i_qty = c4.number_input("Số lượng", 1, step=1)
             i_price = c5.number_input("Đơn giá", 0, step=1000)
-            total = i_qty * i_price
-            st.info(f"💰 Thành tiền: {format_currency(total)}")
             
-            if st.form_submit_button("Lưu & Tạo Báo Giá"):
-                if not name: st.error("Chưa nhập tên khách!")
+            # Nút thêm hàng
+            if st.form_submit_button("➕ Thêm vào danh sách"):
+                if i_name:
+                    item_total = i_qty * i_price
+                    st.session_state.cart.append({
+                        "name": i_name,
+                        "qty": i_qty,
+                        "price": i_price,
+                        "total": item_total
+                    })
+                    st.toast(f"Đã thêm: {i_name}")
+                else:
+                    st.error("Vui lòng nhập tên hàng!")
+
+        # 3. Hiển thị danh sách hàng hóa trong giỏ
+        if st.session_state.cart:
+            st.write("---")
+            st.write("📋 **Danh sách hàng chờ báo giá:**")
+            
+            # Hiển thị bảng
+            cart_df = pd.DataFrame(st.session_state.cart)
+            # Format tiền cho đẹp
+            display_df = cart_df.copy()
+            display_df['price'] = display_df['price'].apply(format_currency)
+            display_df['total'] = display_df['total'].apply(format_currency)
+            display_df.columns = ["Tên hàng", "Số lượng", "Đơn giá", "Thành tiền"]
+            
+            st.table(display_df)
+            
+            # Tính tổng
+            total_order = sum(item['total'] for item in st.session_state.cart)
+            st.metric(label="TỔNG GIÁ TRỊ ĐƠN HÀNG", value=f"{format_currency(total_order)} VNĐ")
+            
+            # Nút Xóa giỏ hàng
+            if st.button("🗑️ Xóa làm lại"):
+                st.session_state.cart = []
+                st.rerun()
+
+            # 4. Nút Lưu Báo Giá
+            st.write("---")
+            if st.button("💾 LƯU BÁO GIÁ", type="primary", use_container_width=True):
+                if not name:
+                    st.error("⚠️ Vui lòng nhập tên khách hàng!")
                 else:
                     new_order = {
-                        "order_id": gen_id(), "date": datetime.now().strftime("%Y-%m-%d"),
-                        "status": "Báo giá", "payment_status": "Chưa TT",
+                        "order_id": gen_id(), 
+                        "date": datetime.now().strftime("%Y-%m-%d"),
+                        "status": "Báo giá", 
+                        "payment_status": "Chưa TT",
                         "customer": {"name": name, "phone": phone, "address": addr},
-                        "items": [{"name": i_name, "qty": i_qty, "price": i_price, "total": total}],
-                        "financial": {"total": total, "paid": 0, "debt": total, "staff": staff}
+                        "items": st.session_state.cart,
+                        "financial": {"total": total_order, "paid": 0, "debt": total_order, "staff": staff}
                     }
-                    if add_new_order(new_order): st.success("Thành công!")
+                    
+                    if add_new_order(new_order):
+                        # Lưu thành công -> Lưu vào session để in và reset cart
+                        st.session_state.last_order = new_order
+                        st.session_state.cart = [] # Xóa giỏ hàng
+                        st.rerun() # Load lại trang để hiện nút in
+
+        # 5. Khu vực thông báo thành công và Nút In (Hiện sau khi reload)
+        if st.session_state.last_order:
+            st.success(f"✅ Đã tạo thành công đơn hàng: **{st.session_state.last_order['order_id']}**")
+            
+            # Tạo PDF ngay lập tức
+            pdf_bytes = create_pdf(st.session_state.last_order, "BÁO GIÁ")
+            
+            col_print, col_new = st.columns(2)
+            with col_print:
+                st.download_button(
+                    label="🖨️ Tải File Báo Giá (PDF)",
+                    data=pdf_bytes,
+                    file_name=f"BG_{st.session_state.last_order['order_id']}.pdf",
+                    mime="application/pdf",
+                    type="primary"
+                )
+            with col_new:
+                if st.button("Tạo đơn mới"):
+                    st.session_state.last_order = None
+                    st.rerun()
 
     elif menu == "2. Quản Lý Đơn Hàng (Pipeline)":
         st.title("🏭 Quy Trình Sản Xuất")
