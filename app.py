@@ -4,6 +4,7 @@ import json
 import time
 import os
 import requests
+import unicodedata
 from datetime import datetime
 from fpdf import FPDF
 from docxtpl import DocxTemplate
@@ -12,14 +13,14 @@ from num2words import num2words
 import gspread
 from google.oauth2.service_account import Credentials
 
-# --- CẤU HÌNH HỆ THỐNG ---
-# Đã cập nhật Link Google Sheet của bạn
+# --- CẤU HÌNH ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit"
 TEMPLATE_CONTRACT = 'Hop dong .docx' 
 FONT_FILENAME = 'Roboto-Regular.ttf'
 
-# --- HÀM HỖ TRỢ: TẢI FONT TỰ ĐỘNG (Tránh lỗi Unicode) ---
+# --- HÀM HỖ TRỢ: XỬ LÝ TIẾNG VIỆT & FONT ---
 def check_and_download_font():
+    """Tải font Roboto nếu chưa có"""
     if not os.path.exists(FONT_FILENAME):
         try:
             url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf"
@@ -28,7 +29,12 @@ def check_and_download_font():
                 f.write(response.content)
         except: pass
 
-# --- HÀM HỖ TRỢ TIỀN TỆ ---
+def remove_accents(input_str):
+    """Chuyển tiếng Việt có dấu thành không dấu (Fallback an toàn)"""
+    if not isinstance(input_str, str): return str(input_str)
+    nfkd_form = unicodedata.normalize('NFKD', input_str)
+    return "".join([c for c in nfkd_form if not unicodedata.combining(c)])
+
 def format_currency(value):
     if value is None: return "0"
     try: return "{:,.0f}".format(float(value))
@@ -47,7 +53,6 @@ def get_gspread_client():
             return None
         
         creds_dict = dict(st.secrets["service_account"])
-        # Tự động sửa lỗi xuống dòng trong Private Key
         if "private_key" in creds_dict:
             creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         
@@ -58,7 +63,7 @@ def get_gspread_client():
         st.error(f"Lỗi kết nối: {e}")
         return None
 
-# --- XỬ LÝ DỮ LIỆU (DATABASE CORE) ---
+# --- DATABASE CORE ---
 def fetch_all_orders():
     client = get_gspread_client()
     if not client: return []
@@ -70,16 +75,12 @@ def fetch_all_orders():
         processed_data = []
         for row in raw_data:
             try:
-                # Xử lý an toàn: Dùng .get() để tránh lỗi nếu thiếu cột
                 cust = row.get('customer')
                 row['customer'] = json.loads(cust) if isinstance(cust, str) and cust else (cust if isinstance(cust, dict) else {})
-                
                 items = row.get('items')
                 row['items'] = json.loads(items) if isinstance(items, str) and items else (items if isinstance(items, list) else [])
-                
                 fin = row.get('financial')
                 row['financial'] = json.loads(fin) if isinstance(fin, str) and fin else (fin if isinstance(fin, dict) else {})
-                
                 processed_data.append(row)
             except: continue
         return processed_data
@@ -95,21 +96,15 @@ def update_order_status(order_id, new_status, new_payment_status=None, paid_amou
         if not cell: return False
         
         row_idx = cell.row
-        ws.update_cell(row_idx, 3, new_status) # Cột Status
-        
-        if new_payment_status:
-            ws.update_cell(row_idx, 4, new_payment_status) # Cột Payment
+        ws.update_cell(row_idx, 3, new_status)
+        if new_payment_status: ws.update_cell(row_idx, 4, new_payment_status)
             
         if paid_amount > 0:
             current_fin_str = ws.cell(row_idx, 7).value
             try: current_fin = json.loads(current_fin_str) if current_fin_str else {}
             except: current_fin = {}
-            
-            curr_paid = float(current_fin.get('paid', 0))
-            curr_total = float(current_fin.get('total', 0))
-            current_fin['paid'] = curr_paid + float(paid_amount)
-            current_fin['debt'] = curr_total - current_fin['paid']
-            
+            current_fin['paid'] = float(current_fin.get('paid', 0)) + float(paid_amount)
+            current_fin['debt'] = float(current_fin.get('total', 0)) - current_fin['paid']
             ws.update_cell(row_idx, 7, json.dumps(current_fin, ensure_ascii=False))
             
         st.cache_data.clear()
@@ -150,7 +145,6 @@ def save_cash_log(date, type_, amount, desc):
         except: 
             ws = sh.add_worksheet("Cashbook", 1000, 10)
             ws.append_row(["date", "type", "amount", "category", "desc"])
-        
         ws.append_row([str(date), type_, amount, "Thu tiền hàng" if type_=='Thu' else "Chi phí", desc])
         st.cache_data.clear()
     except: pass
@@ -172,70 +166,97 @@ def gen_id():
         if str(o.get('order_id', '')).endswith(year): count += 1
     return f"{count+1:03d}/DH.{year}"
 
-# --- PDF GENERATOR (ĐÃ FIX FONT) ---
+# --- PDF GENERATOR (AN TOÀN TUYỆT ĐỐI) ---
 class PDFGen(FPDF):
     def header(self):
         check_and_download_font()
         try:
             self.add_font('Roboto', '', FONT_FILENAME, uni=True)
             self.set_font('Roboto', '', 14)
-            self.cell(0, 10, 'CÔNG TY IN ẤN AN LỘC PHÁT', 0, 1, 'C')
-            self.ln(10)
+            # Tiêu đề sẽ được set trong body để kiểm soát lỗi font
         except: pass
 
-def create_pdf(order, title):
+def generate_pdf_content(order, title, safe_mode=False):
     pdf = PDFGen()
     pdf.add_page()
+    
+    # Chọn font
     check_and_download_font()
-    try:
-        pdf.add_font('Roboto', '', FONT_FILENAME, uni=True)
-        pdf.set_font('Roboto', '', 11)
-    except: pdf.set_font('Arial', '', 11)
+    font_name = 'Arial'
+    if not safe_mode:
+        try:
+            pdf.add_font('Roboto', '', FONT_FILENAME, uni=True)
+            font_name = 'Roboto'
+        except: font_name = 'Arial'
+    
+    pdf.set_font(font_name, '', 11)
 
+    # Hàm xử lý text (nếu safe_mode=True thì bỏ dấu)
+    def txt(s):
+        s = str(s) if s else ""
+        return remove_accents(s) if safe_mode else s
+
+    # Header Công Ty
+    pdf.set_font(font_name, '', 14)
+    pdf.cell(0, 10, txt('CÔNG TY IN ẤN AN LỘC PHÁT'), 0, 1, 'C')
+    pdf.ln(5)
+
+    # Tiêu đề
+    pdf.set_font_size(16)
+    pdf.cell(0, 10, txt(title), 0, 1, 'C')
+    
+    # Thông tin đơn
+    pdf.set_font_size(11)
     oid = order.get('order_id', '')
     odate = order.get('date', '')
+    pdf.cell(0, 8, txt(f"Mã: {oid} | Ngày: {odate}"), 0, 1, 'C')
+    pdf.ln(5)
+    
     cust = order.get('customer', {})
-    items = order.get('items', [])
-    
-    pdf.set_font_size(16)
-    pdf.cell(0, 10, title, 0, 1, 'C')
-    pdf.set_font_size(11)
-    pdf.cell(0, 8, f"Mã: {oid} | Ngày: {odate}", 0, 1, 'C')
+    pdf.cell(0, 7, txt(f"Khách hàng: {cust.get('name', '')}"), 0, 1)
+    pdf.cell(0, 7, txt(f"SĐT: {cust.get('phone', '')}"), 0, 1)
+    pdf.cell(0, 7, txt(f"Địa chỉ: {cust.get('address', '')}"), 0, 1)
     pdf.ln(5)
     
-    pdf.cell(0, 7, f"Khách hàng: {cust.get('name', '')}", 0, 1)
-    pdf.cell(0, 7, f"SĐT: {cust.get('phone', '')}", 0, 1)
-    pdf.cell(0, 7, f"Địa chỉ: {cust.get('address', '')}", 0, 1)
-    pdf.ln(5)
-    
+    # Table Header
     pdf.set_fill_color(220, 220, 220)
     pdf.cell(10, 8, "STT", 1, 0, 'C', 1)
-    pdf.cell(80, 8, "Tên hàng", 1, 0, 'C', 1)
+    pdf.cell(80, 8, txt("Tên hàng"), 1, 0, 'C', 1)
     pdf.cell(20, 8, "SL", 1, 0, 'C', 1)
-    pdf.cell(30, 8, "Đơn giá", 1, 0, 'C', 1)
-    pdf.cell(40, 8, "Thành tiền", 1, 1, 'C', 1)
+    pdf.cell(30, 8, txt("Đơn giá"), 1, 0, 'C', 1)
+    pdf.cell(40, 8, txt("Thành tiền"), 1, 1, 'C', 1)
     
     total = 0
+    items = order.get('items', [])
     for i, item in enumerate(items):
         try: item_total = float(item.get('total', 0))
         except: item_total = 0
         total += item_total
         
         pdf.cell(10, 8, str(i+1), 1, 0, 'C')
-        pdf.cell(80, 8, str(item.get('name', '')), 1, 0)
+        pdf.cell(80, 8, txt(item.get('name', '')), 1, 0)
         pdf.cell(20, 8, str(item.get('qty', 0)), 1, 0, 'C')
         pdf.cell(30, 8, format_currency(item.get('price', 0)), 1, 0, 'R')
         pdf.cell(40, 8, format_currency(item_total), 1, 1, 'R')
     
-    pdf.cell(140, 8, "TỔNG CỘNG:", 1, 0, 'R')
+    pdf.cell(140, 8, txt("TỔNG CỘNG:"), 1, 0, 'R')
     pdf.cell(40, 8, format_currency(total), 1, 1, 'R')
     pdf.ln(10)
-    try: money_text = read_money_vietnamese(total)
-    except: money_text = f"{format_currency(total)} đồng."
-    pdf.multi_cell(0, 8, f"Bằng chữ: {money_text}")
+    
+    money_text = read_money_vietnamese(total)
+    pdf.multi_cell(0, 8, txt(f"Bằng chữ: {money_text}"))
+    
     return bytes(pdf.output())
 
-# --- GIAO DIỆN CHÍNH ---
+def create_pdf(order, title):
+    """Thử in có dấu, nếu lỗi thì in không dấu"""
+    try:
+        return generate_pdf_content(order, title, safe_mode=False)
+    except Exception as e:
+        # Nếu lỗi UnicodeEncodeError, chạy lại với chế độ không dấu
+        return generate_pdf_content(order, title, safe_mode=True)
+
+# --- UI MAIN ---
 def main():
     st.set_page_config(page_title="Hệ Thống In Ấn", layout="wide")
     menu = st.sidebar.radio("CHỨC NĂNG", ["1. Tạo Báo Giá", "2. Quản Lý Đơn Hàng (Pipeline)", "3. Sổ Quỹ & Báo Cáo"])
@@ -273,7 +294,8 @@ def main():
         all_orders = fetch_all_orders()
         tabs = st.tabs(["1️⃣ Báo Giá", "2️⃣ Thiết Kế", "3️⃣ Sản Xuất", "4️⃣ Giao Hàng", "5️⃣ Công Nợ", "✅ Hoàn Thành"])
         
-        with tabs[0]: # Báo Giá
+        # 1. BÁO GIÁ
+        with tabs[0]:
             orders = [o for o in all_orders if o.get('status') == 'Báo giá']
             if not orders: st.info("Trống.")
             for o in orders:
@@ -288,7 +310,8 @@ def main():
                         update_order_status(oid, "Thiết kế")
                         st.rerun()
 
-        with tabs[1]: # Thiết Kế
+        # 2. THIẾT KẾ
+        with tabs[1]:
             orders = [o for o in all_orders if o.get('status') == 'Thiết kế']
             if not orders: st.info("Trống.")
             for o in orders:
@@ -299,7 +322,8 @@ def main():
                         update_order_status(oid, "Sản xuất")
                         st.rerun()
 
-        with tabs[2]: # Sản Xuất
+        # 3. SẢN XUẤT
+        with tabs[2]:
             orders = [o for o in all_orders if o.get('status') == 'Sản xuất']
             if not orders: st.info("Trống.")
             for o in orders:
@@ -310,7 +334,8 @@ def main():
                         update_order_status(oid, "Giao hàng")
                         st.rerun()
 
-        with tabs[3]: # Giao Hàng
+        # 4. GIAO HÀNG
+        with tabs[3]:
             orders = [o for o in all_orders if o.get('status') == 'Giao hàng']
             if not orders: st.info("Trống.")
             for o in orders:
@@ -324,7 +349,8 @@ def main():
                         update_order_status(oid, "Công nợ")
                         st.rerun()
 
-        with tabs[4]: # Công Nợ
+        # 5. CÔNG NỢ
+        with tabs[4]:
             orders = [o for o in all_orders if o.get('status') == 'Công nợ']
             if not orders: st.info("Hết nợ.")
             for o in orders:
@@ -344,7 +370,8 @@ def main():
                         time.sleep(1)
                         st.rerun()
 
-        with tabs[5]: # Hoàn Thành
+        # 6. HOÀN THÀNH
+        with tabs[5]:
             orders = [o for o in all_orders if o.get('status') == 'Hoàn thành']
             if orders:
                 df = pd.DataFrame([{"Mã": x.get('order_id'), "Khách": x.get('customer', {}).get('name'), "Tổng": format_currency(x.get('financial', {}).get('total', 0)), "Ngày": x.get('date')} for x in orders])
