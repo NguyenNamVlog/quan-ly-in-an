@@ -13,3 +13,12 @@ num2words
 openpyxl
 gspread
 st-gsheets-connection
+streamlit
+pandas
+gspread
+google-auth
+fpdf
+docxtpl
+plotly
+num2words
+openpyxl
