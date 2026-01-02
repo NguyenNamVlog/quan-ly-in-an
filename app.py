@@ -359,7 +359,8 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt("- Báo giá này áp dụng trong vòng 30 ngày."), 0, 1)
         pdf.ln(2)
         pdf.set_x(10)
-        pdf.multi_cell(190, 5, txt("Rất mong nhận được sự hợp tác của Quý khách hàng! Trân trọng! "))
+        pdf.multi_cell(190, 5, txt("Rất mong nhận được sự hợp tác của Quý khách hàng"))
+        pdf.cell(0, 5, txt("Trân trọng!"), 0, 1)
     
     return bytes(pdf.output())
 
@@ -629,17 +630,8 @@ def main():
         with tabs[4]: render_tab_content("Công nợ", None, "")
 
         with tabs[5]: # Hoàn thành
-            orders = [o for o in all_orders if o.get('status') == 'Hoàn thành']
-            if orders:
-                data = []
-                for o in orders:
-                    data.append({
-                        "Mã": o['order_id'], "Khách": o['customer']['name'],
-                        "Tổng tiền": format_currency(o['financial']['total']),
-                        "Trạng thái": o.get('payment_status'),
-                        "Hoa hồng": o['financial'].get('commission_status')
-                    })
-                st.dataframe(pd.DataFrame(data), use_container_width=True)
+            # --- CẬP NHẬT TAB HOÀN THÀNH: SỬ DỤNG CHUNG GIAO DIỆN XỬ LÝ (Để có nút Chi Hoa Hồng) ---
+            render_tab_content("Hoàn thành", None, "")
 
     # --- TAB 3: TÀI CHÍNH (CHỈ HIỂN THỊ TIỀN MẶT - TM) ---
     elif menu == "3. Sổ Quỹ & Báo Cáo":
