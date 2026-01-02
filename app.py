@@ -360,8 +360,7 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt("- Báo giá này áp dụng trong vòng 30 ngày."), 0, 1)
         pdf.ln(2)
         pdf.set_x(10)
-        pdf.multi_cell(190, 5, txt("Rất mong nhận được sự hợp tác của Quý khách hàng"))
-        pdf.cell(0, 5, txt("Trân trọng!"), 0, 1)
+        pdf.multi_cell(190, 5, txt("Rất mong nhận được sự hợp tác của Quý khách hàng! Trân trọng! "))
     
     return bytes(pdf.output())
 
@@ -649,8 +648,13 @@ def main():
         tab1, tab2 = st.tabs(["Sổ Quỹ", "Báo Cáo"])
         with tab1:
             df = pd.DataFrame(fetch_cashbook())
+            # Xử lý data để hiển thị đẹp
             if not df.empty and 'amount' in df.columns and 'type' in df.columns:
                 df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
+                
+                # Tự động tạo cột type nếu thiếu hoặc sai (để tránh lỗi)
+                if 'type' not in df.columns: df['type'] = 'Thu'
+
                 df['Thu'] = df.apply(lambda x: x['amount'] if x['type'] == 'Thu' else 0, axis=1)
                 df['Chi'] = df.apply(lambda x: x['amount'] if x['type'] == 'Chi' else 0, axis=1)
                 
@@ -666,13 +670,24 @@ def main():
                 df['Thu'] = df['Thu'].apply(lambda x: format_currency(x) if x > 0 else "")
                 df['Chi'] = df['Chi'].apply(lambda x: format_currency(x) if x > 0 else "")
                 
+                # Đảm bảo cột note tồn tại
                 if 'note' not in df.columns: df['note'] = ""
+                
                 df_display = df[['date', 'Thu', 'Chi', 'desc', 'note']]
                 df_display.columns = ["Ngày tháng", "Thu", "Chi", "Nội dung", "Ghi chú"]
                 
                 st.dataframe(df_display, use_container_width=True, hide_index=True)
             else:
-                st.info("Sổ quỹ trống hoặc chưa đúng định dạng.")
+                # Nếu bảng trống, khởi tạo DataFrame rỗng với đúng cấu trúc để không lỗi
+                empty_df = pd.DataFrame(columns=["Ngày tháng", "Thu", "Chi", "Nội dung", "Ghi chú"])
+                st.info("Sổ quỹ trống.")
+                st.dataframe(empty_df, use_container_width=True, hide_index=True)
+                
+                # Hiển thị Metric 0 đồng
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Tổng Thu", "0")
+                c2.metric("Tổng Chi", "0")
+                c3.metric("Tồn Quỹ", "0")
                 st.divider()
 
             st.subheader("📝 Ghi Sổ Thu/Chi")
