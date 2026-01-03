@@ -25,10 +25,20 @@ def remove_accents(input_str):
     nfkd_form = unicodedata.normalize('NFKD', s)
     return "".join([c for c in nfkd_form if not unicodedata.combining(c)])
 
+# --- CẬP NHẬT: ĐỊNH DẠNG TIỀN TỆ (DẤU CHẤM HÀNG NGÀN, PHẨY THẬP PHÂN) ---
 def format_currency(value):
     if value is None: return "0"
-    try: return "{:,.0f}".format(float(value))
-    except: return "0"
+    try:
+        val = float(value)
+        # Nếu là số nguyên (không có phần lẻ)
+        if val.is_integer():
+            # Định dạng 1,000,000 -> thay , thành . -> 1.000.000
+            return "{:,.0f}".format(val).replace(",", ".")
+        else:
+            # Nếu có số lẻ: 1,000.50 -> thay , thành X -> thay . thành , -> thay X thành . -> 1.000,50
+            return "{:,.2f}".format(val).replace(",", "X").replace(".", ",").replace("X", ".")
+    except:
+        return "0"
 
 def read_money_vietnamese(amount):
     try: return num2words(amount, lang='vi').capitalize() + " đồng chẵn."
@@ -222,6 +232,9 @@ def add_new_order(order_data):
     except: return False
 
 def save_cash_log(date, type_, amount, method, note):
+    """
+    Cấu trúc: Date | Content | Amount | TM/CK | Note
+    """
     client = get_gspread_client()
     if not client: return
     try:
@@ -277,7 +290,7 @@ def create_pdf(order, title):
         text = str(text)
         return remove_accents(text) if SAFE_MODE else text
 
-    # --- HEADER ---
+    # --- 1. HEADER ---
     if os.path.exists(HEADER_IMAGE):
         try:
             pdf.image(HEADER_IMAGE, x=10, y=10, w=190)
@@ -293,7 +306,7 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt('Số tài khoản: 451557254 – Ngân hàng TMCP Việt Nam Thịnh Vượng - CN Đồng Nai'), 0, 1, 'C')
         pdf.ln(2)
 
-    # --- TITLE ---
+    # --- 2. TITLE ---
     pdf.set_font_size(16)
     pdf.cell(0, 8, txt(title), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.set_font_size(11)
@@ -313,7 +326,7 @@ def create_pdf(order, title):
     cust = order.get('customer', {})
     items = order.get('items', [])
     
-    # --- CUSTOMER INFO ---
+    # --- 3. CUSTOMER INFO ---
     pdf.cell(0, 6, txt(f"Mã số: {oid} | Ngày: {odate}"), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.ln(1)
     pdf.cell(0, 6, txt(f"Khách hàng: {cust.get('name', '')}"), new_x="LMARGIN", new_y="NEXT")
@@ -324,7 +337,7 @@ def create_pdf(order, title):
     pdf.multi_cell(0, 5, txt(intro_text))
     pdf.ln(2)
     
-    # --- TABLE ---
+    # --- 4. TABLE ---
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(10, 8, "STT", 1, 0, 'C', 1)
     pdf.cell(75, 8, txt("Tên hàng / Quy cách"), 1, 0, 'C', 1)
@@ -377,7 +390,7 @@ def create_pdf(order, title):
     pdf.multi_cell(0, 6, txt(f"Bằng chữ: {money_text}"))
     pdf.ln(3)
 
-    # --- SIGNATURE ---
+    # --- 5. SIGNATURE ---
     pdf.set_x(10)
     if is_delivery:
         pdf.cell(95, 5, txt("NGƯỜI NHẬN"), 0, 0, 'C')
@@ -387,7 +400,7 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt("NGƯỜI BÁO GIÁ"), 0, 1, 'R')
         pdf.ln(20)
 
-    # --- FOOTER ---
+    # --- 6. FOOTER ---
     pdf.ln(2)
     pdf.set_font_size(10)
     pdf.set_x(10)
@@ -585,7 +598,6 @@ def main_app():
                 fin = o.get('financial', {})
                 items = o.get('items', [])
                 main_product = items[0]['name'] if items else "---"
-                # Cập nhật hiển thị cột Nhân viên và Hoa hồng
                 table_data.append({
                     "Mã ĐH": o.get('order_id'),
                     "Ngày": o.get('date'),
