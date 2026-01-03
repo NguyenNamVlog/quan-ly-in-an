@@ -25,10 +25,19 @@ def remove_accents(input_str):
     nfkd_form = unicodedata.normalize('NFKD', s)
     return "".join([c for c in nfkd_form if not unicodedata.combining(c)])
 
+# Cập nhật hàm format tiền tệ: Dùng dấu chấm (.) cho hàng ngàn
 def format_currency(value):
     if value is None: return "0"
-    try: return "{:,.0f}".format(float(value))
-    except: return "0"
+    try:
+        val = float(value)
+        if val.is_integer():
+            # VD: 1,000,000 -> 1.000.000
+            return "{:,.0f}".format(val).replace(",", ".")
+        else:
+            # VD: 1,000.50 -> 1.000,50
+            return "{:,.2f}".format(val).replace(",", "X").replace(".", ",").replace("X", ".")
+    except:
+        return "0"
 
 def read_money_vietnamese(amount):
     try: return num2words(amount, lang='vi').capitalize() + " đồng chẵn."
@@ -176,7 +185,6 @@ def delete_order(order_id):
         return False
     except: return False
 
-# --- CẬP NHẬT HÀM SỬA ĐƠN HÀNG (CẬP NHẬT LỢI NHUẬN & HOA HỒNG) ---
 def edit_order_info(order_id, new_cust, new_total, new_items, new_profit, new_comm):
     client = get_gspread_client()
     if not client: return False
@@ -193,13 +201,10 @@ def edit_order_info(order_id, new_cust, new_total, new_items, new_profit, new_co
         old_fin_str = ws.cell(r, 7).value
         try: fin = json.loads(old_fin_str)
         except: fin = {}
-        
-        # Cập nhật các trường tài chính mới
         fin['total'] = new_total
         fin['debt'] = new_total - float(fin.get('paid', 0))
         fin['total_profit'] = new_profit
         fin['total_comm'] = new_comm
-        
         ws.update_cell(r, 7, json.dumps(fin, ensure_ascii=False))
         
         st.cache_data.clear()
@@ -236,7 +241,6 @@ def save_cash_log(date, type_, amount, method, note):
         except: 
             ws = sh.add_worksheet("Cashbook", 1000, 10)
             ws.append_row(["Date", "Content", "Amount", "TM/CK", "Note"])
-        
         if not ws.get_all_values():
              ws.append_row(["Date", "Content", "Amount", "TM/CK", "Note"])
 
@@ -591,31 +595,29 @@ def main_app():
                 fin = o.get('financial', {})
                 items = o.get('items', [])
                 main_product = items[0]['name'] if items else "---"
+                # Áp dụng format tiền tệ cho các cột hiển thị
                 table_data.append({
                     "Mã ĐH": o.get('order_id'),
                     "Ngày": o.get('date'),
                     "Khách hàng": cust.get('name'),
                     "Sản phẩm chính": main_product,
-                    "Tổng tiền": float(fin.get('total', 0)),
-                    "Còn nợ": float(fin.get('debt', 0)),
+                    "Tổng tiền": format_currency(float(fin.get('total', 0))),
+                    "Còn nợ": format_currency(float(fin.get('debt', 0))),
                     "Nhân viên": fin.get('staff', ''),
-                    "Hoa hồng": float(fin.get('total_comm', 0)),
+                    "Hoa hồng": format_currency(float(fin.get('total_comm', 0))),
                     "TT Thanh Toán": o.get('payment_status'),
                     "TT Hoa Hồng": fin.get('commission_status', 'Chưa chi')
                 })
             
             df_display = pd.DataFrame(table_data)
+            
+            # Hiển thị bảng (Không dùng NumberColumn nữa vì đã format string)
             event = st.dataframe(
                 df_display, 
                 use_container_width=True, 
                 hide_index=True, 
                 selection_mode="single-row", 
-                on_select="rerun",
-                column_config={
-                    "Tổng tiền": st.column_config.NumberColumn(format="%.0f đ"),
-                    "Còn nợ": st.column_config.NumberColumn(format="%.0f đ"),
-                    "Hoa hồng": st.column_config.NumberColumn(format="%.0f đ"),
-                }
+                on_select="rerun"
             )
             
             if event.selection.rows:
@@ -655,7 +657,6 @@ def main_app():
                     st.write(f"Đã thanh toán: {format_currency(paid)}")
                     st.error(f"CÒN NỢ: **{format_currency(debt)}**")
                     
-                    # CHỈ ADMIN MỚI THẤY CHI TIẾT LỢI NHUẬN VÀ NÚT CHI HOA HỒNG
                     if is_admin:
                         with st.expander("👁️ Admin View", expanded=True):
                             st.write(f"Lợi nhuận: {format_currency(profit_val)}")
@@ -676,7 +677,6 @@ def main_app():
                     pdf_gh = create_pdf(selected_order_data, "PHIẾU GIAO HÀNG, KIÊM PHIẾU THU")
                     st.download_button("🚚 In Phiếu Giao", pdf_gh, f"GH_{oid}.pdf", "application/pdf", key=f"dl_gh_{oid}", use_container_width=True)
                 
-                # CÁC NÚT TÁC ĐỘNG (CHUYỂN TRẠNG THÁI, XÓA, THU TIỀN) CHỈ DÀNH CHO ADMIN
                 if is_admin:
                     with c_act3:
                         if next_status:
@@ -735,14 +735,12 @@ def main_app():
                             if st.form_submit_button("Lưu Thay Đổi"):
                                 new_items_data = edited_df.to_dict('records')
                                 recalc_total = 0
-                                recalc_profit = 0 # Biến tích lũy lợi nhuận mới
-                                
+                                recalc_profit = 0
                                 for it in new_items_data:
                                     q = float(it.get('qty', 0))
                                     p = float(it.get('price', 0))
                                     v = float(it.get('vat_rate', 0))
                                     c = float(it.get('cost', 0))
-                                    
                                     line_total = q * p
                                     vat_amt = line_total * (v/100)
                                     it['vat_amt'] = vat_amt
@@ -751,17 +749,13 @@ def main_app():
                                     recalc_total += it['total_line']
                                     recalc_profit += it['profit']
                                 
-                                # Tính lại hoa hồng
                                 current_staff = fin.get('staff', '')
                                 comm_rate = 0.3
                                 if current_staff in ["Nam", "Dương"]: comm_rate = 0.6
                                 elif current_staff == "Vạn": comm_rate = 0.5
-                                
                                 recalc_comm = recalc_profit * comm_rate if recalc_profit > 0 else 0
 
                                 new_cust_data = {"name": new_name, "phone": new_phone, "address": new_addr}
-                                
-                                # Gọi hàm update mới có truyền profit và comm
                                 if edit_order_info(oid, new_cust_data, recalc_total, new_items_data, recalc_profit, recalc_comm):
                                     st.success("Cập nhật thành công! (Đã cập nhật hoa hồng)")
                                     time.sleep(1)
@@ -842,7 +836,6 @@ def main_app():
         else:
             st.warning("🔒 Chỉ Admin được phép ghi sổ thủ công.")
 
-# --- CHECK LOGIN ĐẦU TIÊN ---
 if __name__ == "__main__":
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
