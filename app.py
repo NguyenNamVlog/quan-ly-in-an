@@ -60,7 +60,7 @@ def init_users():
             ws.append_row(["username", "password", "role"])
             default_users = [
                 ["Nam", "Emyeu0901", "admin"],
-                ["Duong", "Duong", "staff"],
+                ["Duong", "Duong-", "staff"],
                 ["Van", "Van", "staff"]
             ]
             for u in default_users:
@@ -277,7 +277,7 @@ def create_pdf(order, title):
         text = str(text)
         return remove_accents(text) if SAFE_MODE else text
 
-    # --- 1. HEADER ---
+    # --- HEADER ---
     if os.path.exists(HEADER_IMAGE):
         try:
             pdf.image(HEADER_IMAGE, x=10, y=10, w=190)
@@ -293,7 +293,7 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt('Số tài khoản: 451557254 – Ngân hàng TMCP Việt Nam Thịnh Vượng - CN Đồng Nai'), 0, 1, 'C')
         pdf.ln(2)
 
-    # --- 2. TITLE ---
+    # --- TITLE ---
     pdf.set_font_size(16)
     pdf.cell(0, 8, txt(title), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.set_font_size(11)
@@ -303,17 +303,17 @@ def create_pdf(order, title):
     
     if is_delivery:
         odate = datetime.now().strftime("%d/%m/%Y")
-        intro_text = "Công ty TNHH SX KD TM An Lộc Phát xin cám ơn sự quan tâm của Quý khách hàng đến sản phẩm và dịch vụ của chúng tôi. Xin trân trọng gửi tới Quý  khách hàng báo giá như sau:"
+        intro_text = "Cong ty TNHH SX KD TM An Loc Phat xin cam on su quan tam cua Quy khach hang den san pham va dich vu cua chung toi. Nay ban giao cac hang hoa va dich vu nhu sau:"
     else:
         raw_date = order.get('date', '')
         try: odate = datetime.strptime(raw_date, "%Y-%m-%d").strftime("%d/%m/%Y")
         except: odate = raw_date
-        intro_text = "Công ty TNHH SX KD TM An Lộc Phát xin cám ơn sự quan tâm của Quý khách hàng đến sản phẩm và dịch vụ của chúng tôi. Xin trân trọng gửi tới Quý  khách hàng báo giá như sau:	"
+        intro_text = "Cong ty TNHH SX KD TM An Loc Phat xin cam on su quan tam cua Quy khach hang den san pham va dich vu cua chung toi. Xin tran trong gui toi Quy khach hang bao gia nhu sau:"
 
     cust = order.get('customer', {})
     items = order.get('items', [])
     
-    # --- 3. CUSTOMER INFO ---
+    # --- CUSTOMER INFO ---
     pdf.cell(0, 6, txt(f"Mã số: {oid} | Ngày: {odate}"), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.ln(1)
     pdf.cell(0, 6, txt(f"Khách hàng: {cust.get('name', '')}"), new_x="LMARGIN", new_y="NEXT")
@@ -324,7 +324,7 @@ def create_pdf(order, title):
     pdf.multi_cell(0, 5, txt(intro_text))
     pdf.ln(2)
     
-    # --- 4. TABLE ---
+    # --- TABLE ---
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(10, 8, "STT", 1, 0, 'C', 1)
     pdf.cell(75, 8, txt("Tên hàng / Quy cách"), 1, 0, 'C', 1)
@@ -377,7 +377,7 @@ def create_pdf(order, title):
     pdf.multi_cell(0, 6, txt(f"Bằng chữ: {money_text}"))
     pdf.ln(3)
 
-    # --- 5. SIGNATURE ---
+    # --- SIGNATURE ---
     pdf.set_x(10)
     if is_delivery:
         pdf.cell(95, 5, txt("NGƯỜI NHẬN"), 0, 0, 'C')
@@ -387,7 +387,7 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt("NGƯỜI BÁO GIÁ"), 0, 1, 'R')
         pdf.ln(20)
 
-    # --- 6. FOOTER ---
+    # --- FOOTER ---
     pdf.ln(2)
     pdf.set_font_size(10)
     pdf.set_x(10)
@@ -585,16 +585,32 @@ def main_app():
                 fin = o.get('financial', {})
                 items = o.get('items', [])
                 main_product = items[0]['name'] if items else "---"
+                # Cập nhật hiển thị cột Nhân viên và Hoa hồng
                 table_data.append({
-                    "Mã ĐH": o.get('order_id'), "Ngày": o.get('date'), "Khách hàng": cust.get('name'),
-                    "Sản phẩm chính": main_product, "Tổng tiền": float(fin.get('total', 0)), "Còn nợ": float(fin.get('debt', 0)),
-                    "TT Thanh Toán": o.get('payment_status'), "TT Hoa Hồng": fin.get('commission_status', 'Chưa chi')
+                    "Mã ĐH": o.get('order_id'),
+                    "Ngày": o.get('date'),
+                    "Khách hàng": cust.get('name'),
+                    "Sản phẩm chính": main_product,
+                    "Tổng tiền": float(fin.get('total', 0)),
+                    "Còn nợ": float(fin.get('debt', 0)),
+                    "Nhân viên": fin.get('staff', ''),
+                    "Hoa hồng": float(fin.get('total_comm', 0)),
+                    "TT Thanh Toán": o.get('payment_status'),
+                    "TT Hoa Hồng": fin.get('commission_status', 'Chưa chi')
                 })
             
             df_display = pd.DataFrame(table_data)
             event = st.dataframe(
-                df_display, use_container_width=True, hide_index=True, selection_mode="single-row", on_select="rerun",
-                column_config={"Tổng tiền": st.column_config.NumberColumn(format="%.0f đ"), "Còn nợ": st.column_config.NumberColumn(format="%.0f đ")}
+                df_display, 
+                use_container_width=True, 
+                hide_index=True, 
+                selection_mode="single-row", 
+                on_select="rerun",
+                column_config={
+                    "Tổng tiền": st.column_config.NumberColumn(format="%.0f đ"),
+                    "Còn nợ": st.column_config.NumberColumn(format="%.0f đ"),
+                    "Hoa hồng": st.column_config.NumberColumn(format="%.0f đ"),
+                }
             )
             
             if event.selection.rows:
