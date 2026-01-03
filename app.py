@@ -25,20 +25,10 @@ def remove_accents(input_str):
     nfkd_form = unicodedata.normalize('NFKD', s)
     return "".join([c for c in nfkd_form if not unicodedata.combining(c)])
 
-# --- CẬP NHẬT: ĐỊNH DẠNG TIỀN TỆ (DẤU CHẤM HÀNG NGÀN, PHẨY THẬP PHÂN) ---
 def format_currency(value):
     if value is None: return "0"
-    try:
-        val = float(value)
-        # Nếu là số nguyên (không có phần lẻ)
-        if val.is_integer():
-            # Định dạng 1,000,000 -> thay , thành . -> 1.000.000
-            return "{:,.0f}".format(val).replace(",", ".")
-        else:
-            # Nếu có số lẻ: 1,000.50 -> thay , thành X -> thay . thành , -> thay X thành . -> 1.000,50
-            return "{:,.2f}".format(val).replace(",", "X").replace(".", ",").replace("X", ".")
-    except:
-        return "0"
+    try: return "{:,.0f}".format(float(value))
+    except: return "0"
 
 def read_money_vietnamese(amount):
     try: return num2words(amount, lang='vi').capitalize() + " đồng chẵn."
@@ -186,7 +176,8 @@ def delete_order(order_id):
         return False
     except: return False
 
-def edit_order_info(order_id, new_cust, new_total, new_items):
+# --- CẬP NHẬT HÀM SỬA ĐƠN HÀNG (CẬP NHẬT LỢI NHUẬN & HOA HỒNG) ---
+def edit_order_info(order_id, new_cust, new_total, new_items, new_profit, new_comm):
     client = get_gspread_client()
     if not client: return False
     try:
@@ -202,8 +193,13 @@ def edit_order_info(order_id, new_cust, new_total, new_items):
         old_fin_str = ws.cell(r, 7).value
         try: fin = json.loads(old_fin_str)
         except: fin = {}
+        
+        # Cập nhật các trường tài chính mới
         fin['total'] = new_total
         fin['debt'] = new_total - float(fin.get('paid', 0))
+        fin['total_profit'] = new_profit
+        fin['total_comm'] = new_comm
+        
         ws.update_cell(r, 7, json.dumps(fin, ensure_ascii=False))
         
         st.cache_data.clear()
@@ -232,9 +228,6 @@ def add_new_order(order_data):
     except: return False
 
 def save_cash_log(date, type_, amount, method, note):
-    """
-    Cấu trúc: Date | Content | Amount | TM/CK | Note
-    """
     client = get_gspread_client()
     if not client: return
     try:
@@ -742,20 +735,35 @@ def main_app():
                             if st.form_submit_button("Lưu Thay Đổi"):
                                 new_items_data = edited_df.to_dict('records')
                                 recalc_total = 0
+                                recalc_profit = 0 # Biến tích lũy lợi nhuận mới
+                                
                                 for it in new_items_data:
                                     q = float(it.get('qty', 0))
                                     p = float(it.get('price', 0))
                                     v = float(it.get('vat_rate', 0))
                                     c = float(it.get('cost', 0))
+                                    
                                     line_total = q * p
                                     vat_amt = line_total * (v/100)
                                     it['vat_amt'] = vat_amt
                                     it['total_line'] = line_total + vat_amt
                                     it['profit'] = line_total - (q * c)
                                     recalc_total += it['total_line']
+                                    recalc_profit += it['profit']
+                                
+                                # Tính lại hoa hồng
+                                current_staff = fin.get('staff', '')
+                                comm_rate = 0.3
+                                if current_staff in ["Nam", "Dương"]: comm_rate = 0.6
+                                elif current_staff == "Vạn": comm_rate = 0.5
+                                
+                                recalc_comm = recalc_profit * comm_rate if recalc_profit > 0 else 0
+
                                 new_cust_data = {"name": new_name, "phone": new_phone, "address": new_addr}
-                                if edit_order_info(oid, new_cust_data, recalc_total, new_items_data):
-                                    st.success("Cập nhật thành công!")
+                                
+                                # Gọi hàm update mới có truyền profit và comm
+                                if edit_order_info(oid, new_cust_data, recalc_total, new_items_data, recalc_profit, recalc_comm):
+                                    st.success("Cập nhật thành công! (Đã cập nhật hoa hồng)")
                                     time.sleep(1)
                                     st.rerun()
                 else:
@@ -772,9 +780,7 @@ def main_app():
     elif menu == "3. Sổ Quỹ & Báo Cáo":
         st.header("📊 Sổ Quỹ Tiền Mặt")
         
-        # Load dữ liệu
         df = pd.DataFrame(fetch_cashbook())
-        
         if df.empty:
              df = pd.DataFrame(columns=["Date", "Content", "Amount", "TM/CK", "Note"])
         
@@ -788,7 +794,6 @@ def main_app():
         df['TM/CK_Norm'] = df['TM/CK'].astype(str).str.strip().str.upper()
         df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
 
-        # LỌC DATA TM
         df_tm = df[df['TM/CK_Norm'] == 'TM'].copy()
 
         if not df_tm.empty:
@@ -815,7 +820,6 @@ def main_app():
             c1, c2, c3 = st.columns(3)
             c1.metric("Tổng Thu (TM)", "0"); c2.metric("Tổng Chi (TM)", "0"); c3.metric("Tồn Quỹ Tiền Mặt", "0")
 
-        # CHỈ ADMIN MỚI ĐƯỢC GHI SỔ THỦ CÔNG
         if is_admin:
             st.write("---")
             st.subheader("📝 Ghi Sổ Tiền Mặt")
