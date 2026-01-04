@@ -25,19 +25,15 @@ def remove_accents(input_str):
     nfkd_form = unicodedata.normalize('NFKD', s)
     return "".join([c for c in nfkd_form if not unicodedata.combining(c)])
 
-# Cập nhật hàm format tiền tệ: Dùng dấu chấm (.) cho hàng ngàn
 def format_currency(value):
     if value is None: return "0"
     try:
         val = float(value)
         if val.is_integer():
-            # VD: 1,000,000 -> 1.000.000
             return "{:,.0f}".format(val).replace(",", ".")
         else:
-            # VD: 1,000.50 -> 1.000,50
             return "{:,.2f}".format(val).replace(",", "X").replace(".", ",").replace("X", ".")
-    except:
-        return "0"
+    except: return "0"
 
 def read_money_vietnamese(amount):
     try: return num2words(amount, lang='vi').capitalize() + " đồng chẵn."
@@ -56,14 +52,47 @@ def get_gspread_client():
         return gspread.authorize(creds)
     except: return None
 
+# --- CUSTOMER MANAGEMENT (MỚI) ---
+def fetch_customers():
+    client = get_gspread_client()
+    if not client: return []
+    try:
+        sh = client.open_by_url(SHEET_URL)
+        try: ws = sh.worksheet("Customers")
+        except: return [] # Chưa có sheet
+        return ws.get_all_records()
+    except: return []
+
+def save_customer_db(name, phone, address):
+    client = get_gspread_client()
+    if not client or not phone: return
+    try:
+        sh = client.open_by_url(SHEET_URL)
+        try: ws = sh.worksheet("Customers")
+        except: 
+            ws = sh.add_worksheet("Customers", 1000, 5)
+            ws.append_row(["phone", "name", "address", "last_order"])
+        
+        # Lấy tất cả số điện thoại để kiểm tra trùng
+        try:
+            phones = ws.col_values(1) # Cột 1 là phone
+        except: phones = []
+
+        if phone not in phones:
+            ws.append_row([str(phone), name, address, datetime.now().strftime("%Y-%m-%d")])
+            st.cache_data.clear() # Xóa cache để cập nhật danh sách mới
+        else:
+            # Nếu đã có, có thể update lại địa chỉ/tên nếu cần (Ở đây tạm bỏ qua, chỉ thêm mới)
+            pass
+    except: pass
+
 # --- USER MANAGEMENT ---
 def init_users():
     client = get_gspread_client()
     if not client: return
     try:
         sh = client.open_by_url(SHEET_URL)
-        try:
-            ws = sh.worksheet("Users")
+        try: ws = sh.worksheet("Users")
         except:
             ws = sh.add_worksheet("Users", 100, 3)
             ws.append_row(["username", "password", "role"])
@@ -72,8 +101,7 @@ def init_users():
                 ["Duong", "Duong-", "staff"],
                 ["Van", "Van", "staff"]
             ]
-            for u in default_users:
-                ws.append_row(u)
+            for u in default_users: ws.append_row(u)
     except: pass
 
 def get_users_db():
@@ -207,6 +235,9 @@ def edit_order_info(order_id, new_cust, new_total, new_items, new_profit, new_co
         fin['total_comm'] = new_comm
         ws.update_cell(r, 7, json.dumps(fin, ensure_ascii=False))
         
+        # Cập nhật luôn thông tin khách hàng nếu có sửa đổi
+        save_customer_db(new_cust.get('name'), new_cust.get('phone'), new_cust.get('address'))
+        
         st.cache_data.clear()
         return True
     except: return False
@@ -287,7 +318,7 @@ def create_pdf(order, title):
         text = str(text)
         return remove_accents(text) if SAFE_MODE else text
 
-    # --- 1. HEADER ---
+    # --- HEADER ---
     if os.path.exists(HEADER_IMAGE):
         try:
             pdf.image(HEADER_IMAGE, x=10, y=10, w=190)
@@ -303,7 +334,7 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt('Số tài khoản: 451557254 – Ngân hàng TMCP Việt Nam Thịnh Vượng - CN Đồng Nai'), 0, 1, 'C')
         pdf.ln(2)
 
-    # --- 2. TITLE ---
+    # --- TITLE ---
     pdf.set_font_size(16)
     pdf.cell(0, 8, txt(title), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.set_font_size(11)
@@ -323,7 +354,7 @@ def create_pdf(order, title):
     cust = order.get('customer', {})
     items = order.get('items', [])
     
-    # --- 3. CUSTOMER INFO ---
+    # --- CUSTOMER INFO ---
     pdf.cell(0, 6, txt(f"Mã số: {oid} | Ngày: {odate}"), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.ln(1)
     pdf.cell(0, 6, txt(f"Khách hàng: {cust.get('name', '')}"), new_x="LMARGIN", new_y="NEXT")
@@ -334,7 +365,7 @@ def create_pdf(order, title):
     pdf.multi_cell(0, 5, txt(intro_text))
     pdf.ln(2)
     
-    # --- 4. TABLE ---
+    # --- TABLE ---
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(10, 8, "STT", 1, 0, 'C', 1)
     pdf.cell(75, 8, txt("Tên hàng / Quy cách"), 1, 0, 'C', 1)
@@ -387,7 +418,7 @@ def create_pdf(order, title):
     pdf.multi_cell(0, 6, txt(f"Bằng chữ: {money_text}"))
     pdf.ln(3)
 
-    # --- 5. SIGNATURE ---
+    # --- SIGNATURE ---
     pdf.set_x(10)
     if is_delivery:
         pdf.cell(95, 5, txt("NGƯỜI NHẬN"), 0, 0, 'C')
@@ -397,7 +428,7 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt("NGƯỜI BÁO GIÁ"), 0, 1, 'R')
         pdf.ln(20)
 
-    # --- 6. FOOTER ---
+    # --- FOOTER ---
     pdf.ln(2)
     pdf.set_font_size(10)
     pdf.set_x(10)
@@ -446,10 +477,8 @@ def login_page():
 
 # --- MAIN APP ---
 def main_app():
-    # Kiểm tra quyền Admin ngay đầu hàm
     is_admin = st.session_state.role == 'admin'
 
-    # Sidebar User Info & Logout
     with st.sidebar:
         st.write(f"👤 **{st.session_state.user['username']}** ({st.session_state.role})")
         if st.button("Đăng xuất"):
@@ -477,16 +506,39 @@ def main_app():
     if 'cart' not in st.session_state: st.session_state.cart = []
     if 'last_order' not in st.session_state: st.session_state.last_order = None
 
-    # --- TAB 1: TẠO BÁO GIÁ (AI CŨNG ĐƯỢC DÙNG) ---
+    # --- TAB 1: TẠO BÁO GIÁ (CÓ CHỌN KHÁCH CŨ) ---
     if menu == "1. Tạo Báo Giá":
         st.header("📝 Tạo Báo Giá Mới")
         
-        c1, c2 = st.columns(2)
-        name = c1.text_input("Tên Khách Hàng", key="in_name")
-        phone = c2.text_input("Số Điện Thoại", key="in_phone")
-        addr = st.text_input("Địa Chỉ", key="in_addr")
+        # Khởi tạo session state cho form khách hàng nếu chưa có
+        if 'c_name' not in st.session_state: st.session_state.c_name = ""
+        if 'c_phone' not in st.session_state: st.session_state.c_phone = ""
+        if 'c_addr' not in st.session_state: st.session_state.c_addr = ""
+
+        # Lấy danh sách khách hàng để tìm kiếm
+        customers = fetch_customers()
+        cust_options = [""] + [f"{c['phone']} - {c['name']}" for c in customers]
         
-        # Tự động chọn nhân viên theo user đăng nhập
+        # Selectbox tìm khách
+        selected_cust = st.selectbox("🔍 Tìm khách cũ (SĐT - Tên):", cust_options)
+        
+        # Xử lý khi chọn khách
+        if selected_cust:
+            s_phone = selected_cust.split(" - ")[0]
+            for c in customers:
+                if str(c['phone']) == s_phone:
+                    st.session_state.c_name = c['name']
+                    st.session_state.c_phone = str(c['phone'])
+                    st.session_state.c_addr = c['address']
+                    break
+        
+        # Form nhập liệu (Liên kết với Session State)
+        c1, c2 = st.columns(2)
+        name = c1.text_input("Tên Khách Hàng", value=st.session_state.c_name)
+        phone = c2.text_input("Số Điện Thoại", value=st.session_state.c_phone)
+        addr = st.text_input("Địa Chỉ", value=st.session_state.c_addr)
+        
+        # Tự động chọn nhân viên
         user_name = st.session_state.user['username']
         staff_options = ["Nam", "Dương", "Vạn", "Khác"]
         default_idx = 0
@@ -567,6 +619,9 @@ def main_app():
                         }
                     }
                     if add_new_order(new_order):
+                        # Lưu khách hàng mới nếu chưa có
+                        save_customer_db(name, phone, addr)
+                        
                         st.session_state.last_order = new_order
                         st.session_state.cart = []
                         st.rerun()
@@ -595,7 +650,6 @@ def main_app():
                 fin = o.get('financial', {})
                 items = o.get('items', [])
                 main_product = items[0]['name'] if items else "---"
-                # Áp dụng format tiền tệ cho các cột hiển thị
                 table_data.append({
                     "Mã ĐH": o.get('order_id'),
                     "Ngày": o.get('date'),
@@ -610,8 +664,6 @@ def main_app():
                 })
             
             df_display = pd.DataFrame(table_data)
-            
-            # Hiển thị bảng (Không dùng NumberColumn nữa vì đã format string)
             event = st.dataframe(
                 df_display, 
                 use_container_width=True, 
