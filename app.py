@@ -53,34 +53,60 @@ def get_gspread_client():
         return gspread.authorize(creds)
     except: return None
 
-# --- CUSTOMER MANAGEMENT ---
+# --- CUSTOMER MANAGEMENT (ĐÃ SỬA LỖI) ---
+def init_customers():
+    """Đảm bảo sheet Customers tồn tại và có header"""
+    client = get_gspread_client()
+    if not client: return
+    try:
+        sh = client.open_by_url(SHEET_URL)
+        try:
+            ws = sh.worksheet("Customers")
+        except:
+            ws = sh.add_worksheet("Customers", 1000, 5)
+        
+        # Nếu sheet trống, thêm header ngay
+        if not ws.get_all_values():
+            ws.append_row(["phone", "name", "address", "last_order"])
+    except: pass
+
 def fetch_customers():
     client = get_gspread_client()
     if not client: return []
     try:
         sh = client.open_by_url(SHEET_URL)
-        try: ws = sh.worksheet("Customers")
-        except: return [] 
+        ws = sh.worksheet("Customers")
         return ws.get_all_records()
     except: return []
 
 def save_customer_db(name, phone, address):
+    """Lưu khách hàng mới, tránh trùng lặp SĐT"""
     client = get_gspread_client()
-    if not client or not phone: return
+    if not client or not phone: return False
     try:
         sh = client.open_by_url(SHEET_URL)
+        # Đảm bảo sheet tồn tại trước khi ghi
         try: ws = sh.worksheet("Customers")
         except: 
-            ws = sh.add_worksheet("Customers", 1000, 5)
-            ws.append_row(["phone", "name", "address", "last_order"])
+            init_customers()
+            ws = sh.worksheet("Customers")
         
-        try: phones = ws.col_values(1) 
-        except: phones = []
+        # Kiểm tra header lần nữa
+        if not ws.get_all_values():
+            ws.append_row(["phone", "name", "address", "last_order"])
 
-        if phone not in phones:
-            ws.append_row([str(phone), name, address, datetime.now().strftime("%Y-%m-%d")])
-            st.cache_data.clear() 
-    except: pass
+        # Chuẩn hóa SĐT để so sánh (xóa khoảng trắng)
+        clean_phone = str(phone).strip()
+        
+        # Lấy danh sách SĐT hiện có (Cột 1)
+        existing_phones = [str(p).strip() for p in ws.col_values(1)]
+        
+        if clean_phone not in existing_phones:
+            ws.append_row([clean_phone, name, address, datetime.now().strftime("%Y-%m-%d")])
+            st.cache_data.clear() # Xóa cache để cập nhật dropdown
+            return True # Đã thêm mới
+        return False # Đã tồn tại
+    except: return False
 
 # --- USER MANAGEMENT ---
 def init_users():
@@ -231,7 +257,9 @@ def edit_order_info(order_id, new_cust, new_total, new_items, new_profit, new_co
         fin['total_comm'] = new_comm
         ws.update_cell(r, 7, json.dumps(fin, ensure_ascii=False))
         
+        # Cập nhật thông tin khách hàng nếu có sửa
         save_customer_db(new_cust.get('name'), new_cust.get('phone'), new_cust.get('address'))
+        
         st.cache_data.clear()
         return True
     except: return False
@@ -434,6 +462,7 @@ def create_pdf(order, title):
 def login_page():
     st.title("🔐 Đăng Nhập Hệ Thống")
     init_users()
+    init_customers() # KHỞI TẠO SHEET KHÁCH HÀNG NGAY KHI MỞ APP
     with st.form("login_form"):
         username = st.text_input("Tên đăng nhập")
         password = st.text_input("Mật khẩu", type="password")
@@ -484,7 +513,9 @@ def main_app():
         if 'c_addr' not in st.session_state: st.session_state.c_addr = ""
 
         customers = fetch_customers()
+        # Tạo danh sách gợi ý
         cust_options = [""] + [f"{c['phone']} - {c['name']}" for c in customers]
+        
         selected_cust = st.selectbox("🔍 Tìm khách cũ (SĐT - Tên):", cust_options)
         if selected_cust:
             s_phone = selected_cust.split(" - ")[0]
@@ -571,7 +602,10 @@ def main_app():
                         }
                     }
                     if add_new_order(new_order):
-                        save_customer_db(name, phone, addr)
+                        # LƯU KHÁCH HÀNG MỚI
+                        if save_customer_db(name, phone, addr):
+                            st.toast("✅ Đã lưu khách hàng mới!", icon="👤")
+                        
                         st.session_state.last_order = new_order
                         st.session_state.cart = []
                         st.rerun()
