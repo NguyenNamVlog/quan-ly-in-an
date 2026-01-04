@@ -73,8 +73,10 @@ def save_customer_db(name, phone, address):
         except: 
             ws = sh.add_worksheet("Customers", 1000, 5)
             ws.append_row(["phone", "name", "address", "last_order"])
+        
         try: phones = ws.col_values(1) 
         except: phones = []
+
         if phone not in phones:
             ws.append_row([str(phone), name, address, datetime.now().strftime("%Y-%m-%d")])
             st.cache_data.clear() 
@@ -90,7 +92,11 @@ def init_users():
         except:
             ws = sh.add_worksheet("Users", 100, 3)
             ws.append_row(["username", "password", "role"])
-            default_users = [["Nam", "Emyeu0901", "admin"], ["Duong", "Duong-", "staff"], ["Van", "Van", "staff"]]
+            default_users = [
+                ["Nam", "Emyeu0901", "admin"],
+                ["Duong", "Duong-", "staff"],
+                ["Van", "Van", "staff"]
+            ]
             for u in default_users: ws.append_row(u)
     except: pass
 
@@ -224,6 +230,7 @@ def edit_order_info(order_id, new_cust, new_total, new_items, new_profit, new_co
         fin['total_profit'] = new_profit
         fin['total_comm'] = new_comm
         ws.update_cell(r, 7, json.dumps(fin, ensure_ascii=False))
+        
         save_customer_db(new_cust.get('name'), new_cust.get('phone'), new_cust.get('address'))
         st.cache_data.clear()
         return True
@@ -581,10 +588,10 @@ def main_app():
         all_orders = fetch_all_orders()
         tabs = st.tabs(["1️⃣ Báo Giá", "2️⃣ Thiết Kế", "3️⃣ Sản Xuất", "4️⃣ Giao Hàng", "5️⃣ Công Nợ", "✅ Hoàn Thành"])
         
-        def render_tab_content(status_filter, next_status, btn_text):
+        def render_tab_content(status_filter, next_status, btn_text, pdf_type=None):
             current_orders = [o for o in all_orders if o.get('status') == status_filter]
             if not current_orders:
-                st.info("Không có đơn hàng.")
+                st.info("Không có đơn hàng nào trong mục này.")
                 return
 
             table_data = []
