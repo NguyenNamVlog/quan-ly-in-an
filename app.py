@@ -381,9 +381,7 @@ def create_pdf(order, title):
         # Lưu vị trí Y bắt đầu của dòng để đồng bộ độ cao các cột
         start_y = pdf.get_y()
         
-        # Cột STT
-        pdf.cell(10, 8, str(i+1), 1, 0, 'C')
-        
+               
         # Cột Tên hàng / Quy cách (Sử dụng multi_cell để tự động xuống dòng)
         # Độ rộng 75, độ cao mỗi dòng con là 8
         x_after_name = pdf.get_x() + 75
@@ -395,7 +393,8 @@ def create_pdf(order, title):
         
         # Quay lại vị trí cũ để vẽ các cột còn lại với độ cao tương ứng
         pdf.set_xy(x_after_name, start_y)
-        
+        # Cột STT
+        pdf.cell(10, 8, str(i+1), 1, 0, 'C')
         pdf.cell(15, h, txt(item.get('unit', '')), 1, 0, 'C')
         pdf.cell(15, h, txt(str(item.get('qty', 0))), 1, 0, 'C')
         pdf.cell(35, h, format_currency(price), 1, 0, 'R')
