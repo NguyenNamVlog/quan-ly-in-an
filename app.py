@@ -364,7 +364,7 @@ def create_pdf(order, title):
     sum_items_total = 0
     total_vat = 0
     
-    # --- PHẦN VẼ BẢNG TRONG HÀM create_pdf ---
+   # --- PHẦN VẼ BẢNG TRONG HÀM create_pdf (ĐÃ FIX LỖI ĐỘ CAO STT) ---
     for i, item in enumerate(items):
         try: 
             price = float(item.get('price', 0))
@@ -378,30 +378,31 @@ def create_pdf(order, title):
         sum_items_total += line_total
         total_vat += vat_val
         
-        # --- TÍNH TOÁN ĐỘ CAO DÒNG ---
-        # Chúng ta giả lập vẽ cột Tên hàng để biết nó chiếm bao nhiêu dòng
+        # 1. Lưu vị trí Y bắt đầu của dòng
         start_y = pdf.get_y()
         
-        # Vẽ thử cột Tên hàng (Multi_cell) để xác định end_y
+        # 2. Bước quan trọng: Vẽ "nháp" cột Tên hàng bằng multi_cell để xác định độ cao h
+        # Di chuyển con trỏ sang vị trí cột Tên hàng (x=20 vì STT chiếm 10)
         pdf.set_x(20) 
-        pdf.multi_cell(75, 8, txt(name_str), 1, 'L')
+        pdf.multi_cell(75, 8, txt(item.get('name', '')), 1, 'L')
+        
+        # Lấy vị trí Y sau khi vẽ xong tên hàng để tính độ cao thực tế h
         end_y = pdf.get_y()
-        h = end_y - start_y # Độ cao thực tế của ô Tên hàng
+        h = end_y - start_y 
         
-        # --- VẼ LẠI CÁC Ô CÒN LẠI VỚI ĐỘ CAO h ---
-        # Quay lại vị trí Y ban đầu để vẽ STT
+        # 3. Quay lại vị trí đầu dòng để vẽ cột STT với độ cao h đã tính
         pdf.set_xy(10, start_y)
-        pdf.cell(10, h, str(i+1), 1, 0, 'C') # Ô STT giờ đã giãn theo h
+        pdf.cell(10, h, str(i+1), 1, 0, 'C') # Bây giờ h đã linh hoạt theo Tên hàng
         
-        # Cột Tên hàng đã vẽ rồi, ta chỉ cần di chuyển con trỏ qua phải cột Tên hàng
-        pdf.set_xy(95, start_y) 
+        # 4. Di chuyển con trỏ qua sau cột Tên hàng để vẽ nốt các cột còn lại
+        pdf.set_xy(95, start_y) # 10 (STT) + 10 (lề trái) + 75 (Tên hàng) = 95
         
         pdf.cell(15, h, txt(item.get('unit', '')), 1, 0, 'C')
-        pdf.cell(15, h, str(item.get('qty', 0)), 1, 0, 'C')
+        pdf.cell(15, h, txt(str(item.get('qty', 0))), 1, 0, 'C')
         pdf.cell(35, h, format_currency(price), 1, 0, 'R')
         pdf.cell(40, h, format_currency(line_total), 1, 1, 'R')
-                
-        # Đảm bảo con trỏ PDF ở đúng vị trí cho dòng tiếp theo
+        
+        # 5. Đảm bảo con trỏ PDF ở đúng vị trí thấp nhất để dòng tiếp theo không đè lên
         pdf.set_y(end_y)
     
     final_total = sum_items_total + total_vat
