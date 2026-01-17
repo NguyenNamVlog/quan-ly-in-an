@@ -364,8 +364,7 @@ def create_pdf(order, title):
     sum_items_total = 0
     total_vat = 0
     
-    for i, item in enumerate(items):
-        # --- PHẦN VẼ BẢNG TRONG HÀM create_pdf ---
+    # --- PHẦN VẼ BẢNG TRONG HÀM create_pdf ---
     for i, item in enumerate(items):
         try: 
             price = float(item.get('price', 0))
