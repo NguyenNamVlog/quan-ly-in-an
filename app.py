@@ -11,7 +11,7 @@ from fpdf import FPDF
 from num2words import num2words
 import gspread
 from google.oauth2.service_account import Credentials
-import plotly.express as px  # Thư viện vẽ biểu đồ đẹp
+import plotly.express as px
 
 # --- CẤU HÌNH ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit"
@@ -24,7 +24,7 @@ def remove_accents(input_str):
     input_str = str(input_str)
     s = input_str.replace('đ', 'd').replace('Đ', 'D')
     nfkd_form = unicodedata.normalize('NFKD', s)
-    return "".join([c for c in nfkd_form if not unicodedata.combining(c)])
+    return "".join([c for c in nfkd_form if not unicodedata.combining(c)]) [cite: 1, 26]
 
 def format_currency(value):
     if value is None: return "0"
@@ -34,11 +34,11 @@ def format_currency(value):
             return "{:,.0f}".format(val).replace(",", ".")
         else:
             return "{:,.2f}".format(val).replace(",", "X").replace(".", ",").replace("X", ".")
-    except: return "0"
+    except: return "0" [cite: 2]
 
 def read_money_vietnamese(amount):
     try: return num2words(amount, lang='vi').capitalize() + " đồng chẵn."
-    except: return "..................... đồng."
+    except: return "..................... đồng." [cite: 2, 3]
 
 # --- KẾT NỐI GOOGLE SHEETS ---
 @st.cache_resource
@@ -51,7 +51,7 @@ def get_gspread_client():
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         return gspread.authorize(creds)
-    except: return None
+    except: return None [cite: 3, 4]
 
 # --- CUSTOMER MANAGEMENT ---
 def fetch_customers():
@@ -62,7 +62,7 @@ def fetch_customers():
         try: ws = sh.worksheet("Customers")
         except: return [] 
         return ws.get_all_records()
-    except: return []
+    except: return [] [cite: 4]
 
 def save_customer_db(name, phone, address):
     client = get_gspread_client()
@@ -73,14 +73,12 @@ def save_customer_db(name, phone, address):
         except: 
             ws = sh.add_worksheet("Customers", 1000, 5)
             ws.append_row(["phone", "name", "address", "last_order"])
-        
         try: phones = ws.col_values(1) 
         except: phones = []
-
         if phone not in phones:
             ws.append_row([str(phone), name, address, datetime.now().strftime("%Y-%m-%d")])
             st.cache_data.clear() 
-    except: pass
+    except: pass [cite: 5, 6]
 
 # --- USER MANAGEMENT ---
 def init_users():
@@ -98,7 +96,7 @@ def init_users():
                 ["Van", "Van", "staff"]
             ]
             for u in default_users: ws.append_row(u)
-    except: pass
+    except: pass [cite: 6, 7, 8]
 
 def get_users_db():
     client = get_gspread_client()
@@ -107,7 +105,7 @@ def get_users_db():
         sh = client.open_by_url(SHEET_URL)
         ws = sh.worksheet("Users")
         return ws.get_all_records()
-    except: return []
+    except: return [] [cite: 8]
 
 def change_password(username, new_pass):
     client = get_gspread_client()
@@ -120,14 +118,14 @@ def change_password(username, new_pass):
             ws.update_cell(cell.row, 2, new_pass)
             return True
         return False
-    except: return False
+    except: return False [cite: 9]
 
 def check_login(username, password):
     users = get_users_db()
     for u in users:
         if str(u['username']).strip() == username and str(u['password']).strip() == password:
             return u
-    return None
+    return None [cite: 10]
 
 # --- DATABASE CORE ---
 def fetch_all_orders():
@@ -149,7 +147,7 @@ def fetch_all_orders():
                 processed_data.append(row)
             except: continue
         return processed_data
-    except: return []
+    except: return [] [cite: 10, 11, 12]
 
 def update_order_status(order_id, new_status, new_payment_status=None, paid_amount=0):
     client = get_gspread_client()
@@ -159,11 +157,9 @@ def update_order_status(order_id, new_status, new_payment_status=None, paid_amou
         ws = sh.worksheet("Orders")
         cell = ws.find(order_id)
         if not cell: return False
-        
         row_idx = cell.row
         ws.update_cell(row_idx, 3, new_status)
         if new_payment_status: ws.update_cell(row_idx, 4, new_payment_status)
-        
         if paid_amount > 0:
             current_fin_str = ws.cell(row_idx, 7).value
             try: fin = json.loads(current_fin_str)
@@ -171,10 +167,9 @@ def update_order_status(order_id, new_status, new_payment_status=None, paid_amou
             fin['paid'] = float(fin.get('paid', 0)) + float(paid_amount)
             fin['debt'] = float(fin.get('total', 0)) - fin['paid']
             ws.update_cell(row_idx, 7, json.dumps(fin, ensure_ascii=False))
-            
         st.cache_data.clear()
         return True
-    except: return False
+    except: return False [cite: 13, 14, 15]
 
 def update_commission_status(order_id, status_text):
     client = get_gspread_client()
@@ -184,7 +179,6 @@ def update_commission_status(order_id, status_text):
         ws = sh.worksheet("Orders")
         cell = ws.find(order_id)
         if not cell: return False
-        
         row_idx = cell.row
         old_fin_str = ws.cell(row_idx, 7).value
         try: fin = json.loads(old_fin_str)
@@ -193,7 +187,7 @@ def update_commission_status(order_id, status_text):
         ws.update_cell(row_idx, 7, json.dumps(fin, ensure_ascii=False))
         st.cache_data.clear()
         return True
-    except: return False
+    except: return False [cite: 15, 16, 17]
 
 def delete_order(order_id):
     client = get_gspread_client()
@@ -207,7 +201,7 @@ def delete_order(order_id):
             st.cache_data.clear()
             return True
         return False
-    except: return False
+    except: return False [cite: 17, 18]
 
 def edit_order_info(order_id, new_cust, new_total, new_items, new_profit, new_comm):
     client = get_gspread_client()
@@ -218,10 +212,8 @@ def edit_order_info(order_id, new_cust, new_total, new_items, new_profit, new_co
         cell = ws.find(order_id)
         if not cell: return False
         r = cell.row
-        
         ws.update_cell(r, 5, json.dumps(new_cust, ensure_ascii=False))
         ws.update_cell(r, 6, json.dumps(new_items, ensure_ascii=False))
-        
         old_fin_str = ws.cell(r, 7).value
         try: fin = json.loads(old_fin_str)
         except: fin = {}
@@ -230,11 +222,10 @@ def edit_order_info(order_id, new_cust, new_total, new_items, new_profit, new_co
         fin['total_profit'] = new_profit
         fin['total_comm'] = new_comm
         ws.update_cell(r, 7, json.dumps(fin, ensure_ascii=False))
-        
         save_customer_db(new_cust.get('name'), new_cust.get('phone'), new_cust.get('address'))
         st.cache_data.clear()
         return True
-    except: return False
+    except: return False [cite: 18, 19, 20]
 
 def add_new_order(order_data):
     client = get_gspread_client()
@@ -245,7 +236,6 @@ def add_new_order(order_data):
         except: 
             ws = sh.add_worksheet("Orders", 1000, 20)
             ws.append_row(["order_id", "date", "status", "payment_status", "customer", "items", "financial"])
-        
         row = [
             order_data.get('order_id'), order_data.get('date'), order_data.get('status'), order_data.get('payment_status'),
             json.dumps(order_data.get('customer', {}), ensure_ascii=False),
@@ -255,7 +245,7 @@ def add_new_order(order_data):
         ws.append_row(row)
         st.cache_data.clear()
         return True
-    except: return False
+    except: return False [cite: 20, 21, 22]
 
 def save_cash_log(date, type_, amount, method, note):
     client = get_gspread_client()
@@ -269,7 +259,7 @@ def save_cash_log(date, type_, amount, method, note):
         if not ws.get_all_values(): ws.append_row(["Date", "Content", "Amount", "TM/CK", "Note"])
         ws.append_row([str(date), type_, amount, method, note])
         st.cache_data.clear()
-    except: pass
+    except: pass [cite: 22, 23]
 
 def fetch_cashbook():
     client = get_gspread_client()
@@ -278,7 +268,7 @@ def fetch_cashbook():
         sh = client.open_by_url(SHEET_URL)
         ws = sh.worksheet("Cashbook")
         return ws.get_all_records()
-    except: return []
+    except: return [] [cite: 24]
 
 def gen_id():
     orders = fetch_all_orders()
@@ -286,9 +276,9 @@ def gen_id():
     count = 0
     for o in orders:
         if str(o.get('order_id', '')).endswith(year): count += 1
-    return f"{count+1:03d}/DH.{year}"
+    return f"{count+1:03d}/DH.{year}" [cite: 24]
 
-# --- PDF GENERATOR ---
+# --- PDF GENERATOR (FIXED WRAP TEXT) ---
 class PDFGen(FPDF):
     def header(self): pass
 
@@ -302,12 +292,12 @@ def create_pdf(order, title):
             pdf.set_font('ArialLocal', '', 11)
         except: SAFE_MODE = True
     else: SAFE_MODE = True
-    if SAFE_MODE: pdf.set_font('Helvetica', '', 11)
+    if SAFE_MODE: pdf.set_font('Helvetica', '', 11) [cite: 24, 25]
 
     def txt(text):
         if not text: return ""
         text = str(text)
-        return remove_accents(text) if SAFE_MODE else text
+        return remove_accents(text) if SAFE_MODE else text [cite: 26]
 
     if os.path.exists(HEADER_IMAGE):
         try:
@@ -322,7 +312,7 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt('Địa chỉ: A1/204A, hẻm 244, đường Bùi Hữu Nghĩa, phường Biên Hòa, tỉnh Đồng Nai'), 0, 1, 'C')
         pdf.cell(0, 5, txt('Điện thoại: 0251 777 6868       Email: anlocphat68.ltd@gmail.com'), 0, 1, 'C')
         pdf.cell(0, 5, txt('Số tài khoản: 451557254 – Ngân hàng TMCP Việt Nam Thịnh Vượng - CN Đồng Nai'), 0, 1, 'C')
-        pdf.ln(2)
+        pdf.ln(2) [cite: 26, 27, 28]
 
     pdf.set_font_size(16)
     pdf.cell(0, 8, txt(title), new_x="LMARGIN", new_y="NEXT", align='C')
@@ -338,7 +328,7 @@ def create_pdf(order, title):
         raw_date = order.get('date', '')
         try: odate = datetime.strptime(raw_date, "%Y-%m-%d").strftime("%d/%m/%Y")
         except: odate = raw_date
-        intro_text = "Cong ty TNHH SX KD TM An Loc Phat xin cam on su quan tam cua Quy khach hang den san pham va dich vu cua chung toi. Xin tran trong gui toi Quy khach hang bao gia nhu sau:"
+        intro_text = "Cong ty TNHH SX KD TM An Loc Phat xin cam on su quan tam cua Quy khach hang den san pham va dich vu cua chung toi. Xin tran trong gui toi Quy khach hang bao gia nhu sau:" [cite: 28, 29, 30]
 
     cust = order.get('customer', {})
     items = order.get('items', [])
@@ -352,18 +342,20 @@ def create_pdf(order, title):
     pdf.ln(2)
     pdf.multi_cell(0, 5, txt(intro_text))
     pdf.ln(2)
-    
+  
+    # Header bảng
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(10, 8, "STT", 1, 0, 'C', 1)
     pdf.cell(75, 8, txt("Tên hàng / Quy cách"), 1, 0, 'C', 1)
     pdf.cell(15, 8, txt("ĐVT"), 1, 0, 'C', 1)
     pdf.cell(15, 8, "SL", 1, 0, 'C', 1)
     pdf.cell(35, 8, txt("Đơn giá"), 1, 0, 'C', 1)
-    pdf.cell(40, 8, txt("Thành tiền"), 1, 1, 'C', 1)
+    pdf.cell(40, 8, txt("Thành tiền"), 1, 1, 'C', 1) [cite: 30, 31]
     
     sum_items_total = 0
     total_vat = 0
     
+    # --- PHẦN FIX LỖI XUỐNG HÀNG ---
     for i, item in enumerate(items):
         try: 
             price = float(item.get('price', 0))
@@ -372,34 +364,57 @@ def create_pdf(order, title):
             vat_rate = float(item.get('vat_rate', 0))
             vat_val = line_total * (vat_rate / 100)
         except: line_total = 0; vat_val = 0
+        
         sum_items_total += line_total
         total_vat += vat_val
-        pdf.cell(10, 8, str(i+1), 1, 0, 'C')
-        pdf.cell(75, 8, txt(item.get('name', '')), 1, 0)
-        pdf.cell(15, 8, txt(item.get('unit', '')), 1, 0, 'C')
-        pdf.cell(15, 8, txt(str(item.get('qty', 0))), 1, 0, 'C')
-        pdf.cell(35, 8, format_currency(price), 1, 0, 'R')
-        pdf.cell(40, 8, format_currency(line_total), 1, 1, 'R')
+        
+        # 1. Lưu tọa độ Y trước khi vẽ hàng
+        start_y = pdf.get_y()
+        
+        # 2. Vẽ cột Tên hàng bằng Multi_cell để tự xuống dòng
+        # Tạm thời dời vị trí để vẽ cột STT trước
+        pdf.set_xy(10, start_y)
+        
+        # Tính độ cao cần thiết cho cột tên hàng
+        # Chúng ta vẽ cột Tên hàng trước để lấy độ cao 'h'
+        pdf.set_x(20) # Bỏ qua cột STT (10)
+        pdf.multi_cell(75, 8, txt(item.get('name', '')), 1, 'L')
+        
+        # Lấy tọa độ Y sau khi vẽ xong tên hàng
+        end_y = pdf.get_y()
+        h = end_y - start_y # Đây là độ cao thực tế của dòng
+        
+        # 3. Quay lại vẽ các cột khác với độ cao h đã tính
+        pdf.set_xy(10, start_y)
+        pdf.cell(10, h, str(i+1), 1, 0, 'C') # STT
+        
+        pdf.set_xy(95, start_y) # Vị trí sau cột tên hàng (10+75+10)
+        pdf.cell(15, h, txt(item.get('unit', '')), 1, 0, 'C')
+        pdf.cell(15, h, txt(str(item.get('qty', 0))), 1, 0, 'C')
+        pdf.cell(35, h, format_currency(price), 1, 0, 'R')
+        pdf.cell(40, h, format_currency(line_total), 1, 1, 'R')
+        
+        # Đảm bảo Y luôn ở vị trí thấp nhất để dòng tiếp theo không đè lên
+        pdf.set_y(end_y) [cite: 32, 33, 34]
     
     final_total = sum_items_total + total_vat
-    
     pdf.cell(150, 8, txt("Cộng tiền hàng:"), 1, 0, 'R')
     pdf.cell(40, 8, format_currency(sum_items_total), 1, 1, 'R')
     pdf.cell(150, 8, txt(f"Tiền VAT:"), 1, 0, 'R')
     pdf.cell(40, 8, format_currency(total_vat), 1, 1, 'R')
     pdf.cell(150, 8, txt("TỔNG CỘNG THANH TOÁN:"), 1, 0, 'R')
     pdf.cell(40, 8, format_currency(final_total), 1, 1, 'R')
-    pdf.ln(5)
+    pdf.ln(5) [cite: 34]
     
     money_text = ""
-    if SAFE_MODE: money_text = f"Tong cong: {format_currency(final_total)} VND"
+    if SAFE_MODE: 
+        money_text = f"Tong cong: {format_currency(final_total)} VND"
     else:
         try: money_text = read_money_vietnamese(final_total)
         except: money_text = f"{format_currency(final_total)} đồng."
     pdf.multi_cell(0, 6, txt(f"Bằng chữ: {money_text}"))
-    pdf.ln(3)
+    pdf.ln(3) [cite: 35, 36]
 
-    pdf.set_x(10)
     if is_delivery:
         pdf.cell(95, 5, txt("NGƯỜI NHẬN"), 0, 0, 'C')
         pdf.cell(95, 5, txt("NGƯỜI GIAO"), 0, 1, 'C')
@@ -410,24 +425,17 @@ def create_pdf(order, title):
 
     pdf.ln(2)
     pdf.set_font_size(10)
-    pdf.set_x(10)
     if is_delivery:
         pdf.multi_cell(190, 5, txt("* Quý khách vui lòng kiểm tra và phản hồi ngay về tình trạng hàng hoá khi giao nhận!"))
-        pdf.set_x(10)
         pdf.multi_cell(190, 5, txt("* Giao hàng miễn phí trong nội thành thành phố Biên Hoà với đơn hàng >1.000.000đ"))
-        pdf.set_x(10)
         pdf.multi_cell(190, 5, txt("Rất mong được hợp tác với Quý khách hàng. Trân trọng!"))
     else:
         pdf.cell(0, 5, txt("Lưu ý:"), 0, 1)
-        pdf.set_x(10)
         pdf.cell(0, 5, txt("- Giá trên đã bao gồm vận chuyển, giao hàng."), 0, 1)
-        pdf.set_x(10)
         pdf.cell(0, 5, txt("- Thời gian hoàn thành, giao hàng: từ 03 - 05 ngày."), 0, 1)
-        pdf.set_x(10)
         pdf.cell(0, 5, txt("- Báo giá này áp dụng trong vòng 30 ngày."), 0, 1)
         pdf.ln(2)
-        pdf.set_x(10)
-        pdf.multi_cell(190, 5, txt("Rất mong nhận được sự hợp tác của Quý khách hàng! Trân trọng! "))
+        pdf.multi_cell(190, 5, txt("Rất mong nhận được sự hợp tác của Quý khách hàng! Trân trọng! ")) [cite: 36, 37, 38, 39, 40]
     return bytes(pdf.output())
 
 # --- LOGIN PAGE ---
@@ -446,7 +454,7 @@ def login_page():
                 st.success(f"Xin chào {username}!")
                 time.sleep(0.5)
                 st.rerun()
-            else: st.error("Sai tên đăng nhập hoặc mật khẩu!")
+            else: st.error("Sai tên đăng nhập hoặc mật khẩu!") [cite: 40, 41, 42]
 
 # --- MAIN APP ---
 def main_app():
@@ -464,7 +472,7 @@ def main_app():
                     if change_password(st.session_state.user['username'], new_p1):
                         st.success("Đổi thành công!")
                     else: st.error("Lỗi hệ thống")
-                else: st.error("Mật khẩu không khớp")
+                else: st.error("Mật khẩu không khớp") [cite: 42, 43, 44]
 
     st.title("Hệ Thống In Ấn An Lộc Phát")
     if "service_account" not in st.secrets:
@@ -533,7 +541,7 @@ def main_app():
                         "total_line": total_sell + vat_amt
                     })
                     st.rerun()
-                else: st.error("Nhập tên hàng!")
+                else: st.error("Nhập tên hàng!") [cite: 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56]
 
         if st.session_state.cart:
             st.write("---")
@@ -574,13 +582,13 @@ def main_app():
                         save_customer_db(name, phone, addr)
                         st.session_state.last_order = new_order
                         st.session_state.cart = []
-                        st.rerun()
+                        st.rerun() [cite: 57, 58, 59, 60, 61, 62, 63, 64]
 
         if st.session_state.last_order:
             oid = st.session_state.last_order['order_id']
             st.success(f"✅ Đã tạo: {oid}")
             pdf_bytes = create_pdf(st.session_state.last_order, "BÁO GIÁ")
-            st.download_button("🖨️ Tải PDF", pdf_bytes, f"BG_{oid}.pdf", "application/pdf", type="primary")
+            st.download_button("🖨️ Tải PDF", pdf_bytes, f"BG_{oid}.pdf", "application/pdf", type="primary") [cite: 65]
 
     # --- TAB 2: QUẢN LÝ ---
     elif menu == "2. Quản Lý Đơn Hàng (Pipeline)":
@@ -676,7 +684,6 @@ def main_app():
                     st.write("---")
                     st.write("💳 **THANH TOÁN & CẬP NHẬT (Admin Only)**")
                     tab_pay, tab_edit = st.tabs(["💸 Thu Tiền", "✏️ Sửa Đơn Hàng"])
-                    
                     with tab_pay:
                         c_p1, c_p2 = st.columns(2)
                         pay_method = c_p1.radio("Hình thức:", ["Một phần", "Toàn bộ"], horizontal=True, key=f"pm_{oid}")
@@ -710,11 +717,9 @@ def main_app():
                                     it['profit'] = (q*p) - (q*c)
                                     r_total += it['total_line']
                                     r_profit += it['profit']
-                                
                                 c_staff = fin.get('staff', '')
                                 rate = 0.6 if c_staff in ["Nam", "Dương"] else (0.5 if c_staff == "Vạn" else 0.3)
                                 r_comm = r_profit * rate if r_profit > 0 else 0
-                                
                                 if edit_order_info(oid, {"name": new_name, "phone": new_phone, "address": new_addr}, r_total, new_items, r_profit, r_comm):
                                     st.success("Cập nhật thành công!"); time.sleep(1); st.rerun()
                 else: st.info("🔒 Bạn chỉ có quyền xem chi tiết.")
@@ -724,7 +729,7 @@ def main_app():
         with tabs[2]: render_tab_content("Sản xuất", "Giao hàng", "✅ Xong -> Giao Hàng", None)
         with tabs[3]: render_tab_content("Giao hàng", "Công nợ", "✅ Giao Xong -> Công Nợ", "PHIẾU GIAO HÀNG")
         with tabs[4]: render_tab_content("Công nợ", None, "", None)
-        with tabs[5]: render_tab_content("Hoàn thành", None, "", None)
+        with tabs[5]: render_tab_content("Hoàn thành", None, "", None) [cite: 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101]
 
     # --- TAB 3: SỔ QUỸ (CHỈ TM) ---
     elif menu == "3. Sổ Quỹ":
@@ -734,7 +739,6 @@ def main_app():
         if 'date' in df.columns: df.rename(columns={'date': 'Date', 'type': 'Content', 'amount': 'Amount', 'desc': 'Note'}, inplace=True)
         for col in ["Date", "Content", "Amount", "TM/CK", "Note"]: 
             if col not in df.columns: df[col] = ""
-        
         df['TM/CK'] = df['TM/CK'].replace("", "TM").fillna("TM")
         df['TM/CK_Norm'] = df['TM/CK'].astype(str).str.strip().str.upper()
         df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
@@ -755,8 +759,7 @@ def main_app():
             df_display['Chi'] = df_display['Chi'].apply(lambda x: format_currency(x) if x > 0 else "")
             df_display.columns = ["Ngày tháng", "Thu", "Chi", "Nội dung/Ghi chú"]
             st.dataframe(df_display, use_container_width=True, hide_index=True)
-        else:
-            st.info("Chưa có giao dịch Tiền mặt nào.")
+        else: st.info("Chưa có giao dịch Tiền mặt nào.")
 
         if is_admin:
             st.write("---")
@@ -764,7 +767,6 @@ def main_app():
             with st.form("cash_entry"):
                 c1, c2 = st.columns(2)
                 type_option = c1.radio("Loại", ["Thu", "Chi"], horizontal=True)
-                st.caption("Hình thức: Tiền Mặt (TM)")
                 d = c2.date_input("Ngày", value=datetime.now())
                 c3, c4 = st.columns(2)
                 amount = c3.number_input("Số tiền", 0, step=10000)
@@ -774,25 +776,18 @@ def main_app():
                         save_cash_log(d, type_option, amount, "TM", note)
                         st.success("Đã lưu!"); time.sleep(1); st.rerun()
                     else: st.warning("Nhập số tiền > 0")
-        else: st.warning("🔒 Chỉ Admin được ghi sổ.")
+        else: st.warning("🔒 Chỉ Admin được ghi sổ.") [cite: 102, 103, 104, 105, 106, 107, 108, 109]
 
-    # --- TAB 4: DASHBOARD & BÁO CÁO (MỚI) ---
+    # --- TAB 4: DASHBOARD & BÁO CÁO ---
     elif menu == "4. Dashboard & Báo Cáo":
         st.header("📈 Dashboard & Báo Cáo Quản Trị")
-        
-        # Load dữ liệu cần thiết
         orders = fetch_all_orders()
         cashbook = fetch_cashbook()
-        
-        # Chuyển đổi sang DataFrame
         df_orders = pd.DataFrame(orders)
         df_cash = pd.DataFrame(cashbook)
         
-        if df_orders.empty:
-            st.info("Chưa có dữ liệu đơn hàng.")
+        if df_orders.empty: st.info("Chưa có dữ liệu đơn hàng.")
         else:
-            # Xử lý dữ liệu đơn hàng để vẽ biểu đồ
-            # 1. Extract financial info
             df_orders['total_revenue'] = df_orders['financial'].apply(lambda x: float(x.get('total', 0)))
             df_orders['total_profit'] = df_orders['financial'].apply(lambda x: float(x.get('total_profit', 0)))
             df_orders['total_comm'] = df_orders['financial'].apply(lambda x: float(x.get('total_comm', 0)))
@@ -800,157 +795,54 @@ def main_app():
             df_orders['cust_name'] = df_orders['customer'].apply(lambda x: x.get('name', 'Unknown'))
             df_orders['comm_status'] = df_orders['financial'].apply(lambda x: x.get('commission_status', 'Chưa chi'))
             
-            # --- TAB UI ---
-            t1, t2, t3, t4, t5 = st.tabs(["1. Tổng Quan", "2. Báo Cáo Lãi/Lỗ (P&L)", "3. Phân Tích Doanh Thu", "4. Công Nợ", "5. Hoa Hồng"])
+            t1, t2, t3, t4, t5 = st.tabs(["1. Tổng Quan", "2. Báo Cáo Lãi/Lỗ", "3. Phân Tích Doanh Thu", "4. Công Nợ", "5. Hoa Hồng"])
             
-            # 1. TỔNG QUAN
             with t1:
-                st.subheader("Trạng Thái Đơn Hàng")
                 status_counts = df_orders['status'].value_counts().reset_index()
                 status_counts.columns = ['Status', 'Count']
-                
-                # Biểu đồ tròn
                 fig = px.pie(status_counts, values='Count', names='Status', title='Tỷ lệ đơn hàng theo trạng thái', hole=0.4)
                 st.plotly_chart(fig, use_container_width=True)
-                
-                # KPI cơ bản
                 k1, k2, k3 = st.columns(3)
-                k1.metric("Tổng đơn hàng", len(df_orders))
-                k2.metric("Đang sản xuất", len(df_orders[df_orders['status'] == 'Sản xuất']))
+                k1.metric("Tổng đơn", len(df_orders))
+                k2.metric("Sản xuất", len(df_orders[df_orders['status'] == 'Sản xuất']))
                 k3.metric("Hoàn thành", len(df_orders[df_orders['status'] == 'Hoàn thành']))
 
-            # 2. P&L REPORT
             with t2:
                 if is_admin:
-                    st.subheader("Báo Cáo Kết Quả Kinh Doanh (Ước tính)")
-                    
-                    # 1. Doanh thu (Tổng giá trị đơn hàng)
                     revenue = df_orders['total_revenue'].sum()
-                    
-                    # 2. Giá vốn (Cost of Goods Sold)
-                    # Phải tính tổng cost từ items của tất cả đơn hàng
-                    total_cogs = 0
-                    for o in orders:
-                        items = o.get('items', [])
-                        for i in items:
-                            try:
-                                total_cogs += float(i.get('qty', 0)) * float(i.get('cost', 0))
-                            except: pass
-                            
-                    # 3. Lợi nhuận gộp
+                    total_cogs = sum(float(i.get('qty', 0)) * float(i.get('cost', 0)) for o in orders for i in o.get('items', []))
                     gross_profit = revenue - total_cogs
-                    
-                    # 4. Chi phí vận hành (Lấy từ Sổ Quỹ - Loại 'Chi')
-                    total_expenses = 0
-                    if not df_cash.empty:
-                        # Chuẩn hóa cột
-                        if 'amount' in df_cash.columns and 'type' in df_cash.columns:
-                             df_cash['amt'] = pd.to_numeric(df_cash['amount'], errors='coerce').fillna(0)
-                             total_expenses = df_cash[df_cash['type'] == 'Chi']['amt'].sum()
-                    
-                    # 5. Lợi nhuận ròng
+                    total_expenses = pd.to_numeric(df_cash[df_cash['type'] == 'Chi']['amount'], errors='coerce').sum() if not df_cash.empty else 0
                     net_profit = gross_profit - total_expenses
-                    
-                    # Hiển thị bảng
                     pl_data = {
-                        "Hạng mục": ["1. Doanh thu bán hàng", "2. Giá vốn hàng bán (COGS)", "3. Lợi nhuận gộp (1-2)", "4. Chi phí vận hành (Sổ quỹ)", "5. Lợi nhuận ròng (3-4)"],
+                        "Hạng mục": ["1. Doanh thu", "2. Giá vốn (COGS)", "3. Lãi gộp", "4. Chi phí (Sổ quỹ)", "5. Lãi ròng"],
                         "Giá trị": [revenue, total_cogs, gross_profit, total_expenses, net_profit]
                     }
                     df_pl = pd.DataFrame(pl_data)
                     df_pl['Giá trị'] = df_pl['Giá trị'].apply(format_currency)
                     st.table(df_pl)
-                else:
-                    st.warning("🔒 Chỉ Admin mới được xem báo cáo Lãi/Lỗ.")
+                else: st.warning("🔒 Chỉ Admin mới được xem.")
 
-            # 3. PHÂN TÍCH DOANH THU
             with t3:
-                st.subheader("Phân Tích Doanh Thu")
-                
-                # Theo Nhân viên
-                st.write("###### Theo Nhân Viên")
-                staff_perf = df_orders.groupby('staff')['total_revenue'].sum().reset_index().sort_values('total_revenue', ascending=False)
-                fig_staff = px.bar(staff_perf, x='staff', y='total_revenue', labels={'total_revenue': 'Doanh thu', 'staff': 'Nhân viên'})
-                st.plotly_chart(fig_staff, use_container_width=True)
-                
-                # Theo Khách hàng (Top 10)
-                st.write("###### Top 10 Khách Hàng")
-                cust_perf = df_orders.groupby('cust_name')['total_revenue'].sum().reset_index().sort_values('total_revenue', ascending=False).head(10)
-                st.dataframe(cust_perf.style.format({"total_revenue": "{:,.0f}"}), use_container_width=True)
+                staff_perf = df_orders.groupby('staff')['total_revenue'].sum().reset_index()
+                st.plotly_chart(px.bar(staff_perf, x='staff', y='total_revenue'), use_container_width=True)
 
-                # Theo Sản phẩm (Cần xử lý items)
-                st.write("###### Top Sản Phẩm Bán Chạy")
-                all_items = []
-                for o in orders:
-                    for i in o.get('items', []):
-                        all_items.append({"Product": i.get('name'), "Revenue": float(i.get('total_line', 0))})
-                
-                if all_items:
-                    df_products = pd.DataFrame(all_items)
-                    prod_perf = df_products.groupby('Product')['Revenue'].sum().reset_index().sort_values('Revenue', ascending=False).head(10)
-                    st.bar_chart(prod_perf.set_index('Product'))
-
-            # 4. CÔNG NỢ
             with t4:
-                st.subheader("Danh Sách Khách Nợ")
-                # Lọc đơn có debt > 0
                 df_orders['debt'] = df_orders['financial'].apply(lambda x: float(x.get('debt', 0)))
-                debtors = df_orders[df_orders['debt'] > 0][['order_id', 'date', 'cust_name', 'total_revenue', 'debt']].copy()
-                
-                if not debtors.empty:
-                    st.metric("Tổng Công Nợ Phải Thu", format_currency(debtors['debt'].sum()))
-                    
-                    debtors.columns = ["Mã ĐH", "Ngày", "Khách hàng", "Tổng đơn", "Còn nợ"]
-                    debtors['Tổng đơn'] = debtors['Tổng đơn'].apply(format_currency)
-                    debtors['Còn nợ'] = debtors['Còn nợ'].apply(format_currency)
-                    st.dataframe(debtors, use_container_width=True)
-                else:
-                    st.success("Tuyệt vời! Không có công nợ.")
+                debtors = df_orders[df_orders['debt'] > 0][['order_id', 'cust_name', 'debt']]
+                st.dataframe(debtors, use_container_width=True)
 
-            # 5. HOA HỒNG
             with t5:
-                st.subheader("Theo Dõi Hoa Hồng Nhân Viên")
-                
-                # Group by Staff and Status
                 comm_summary = df_orders.groupby(['staff', 'comm_status'])['total_comm'].sum().unstack(fill_value=0).reset_index()
-                
-                # Đảm bảo có đủ cột
-                if 'Chưa chi' not in comm_summary.columns: comm_summary['Chưa chi'] = 0.0
-                if 'Đã chi' not in comm_summary.columns: comm_summary['Đã chi'] = 0.0
-                
-                comm_summary['Tổng hoa hồng'] = comm_summary['Chưa chi'] + comm_summary['Đã chi']
-                
-                # Format
-                st.dataframe(
-                    comm_summary,
-                    column_config={
-                        "staff": "Nhân viên",
-                        "Chưa chi": st.column_config.NumberColumn("Chưa thanh toán", format="%.0f đ"),
-                        "Đã chi": st.column_config.NumberColumn("Đã thanh toán", format="%.0f đ"),
-                        "Tổng hoa hồng": st.column_config.NumberColumn("Tổng cộng", format="%.0f đ"),
-                    },
-                    use_container_width=True
-                )
-                
-                # Tổng hợp toàn công ty
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Tổng Hoa Hồng", format_currency(df_orders['total_comm'].sum()))
-                # Tính tổng đã chi/chưa chi toàn bộ
-                total_paid = df_orders[df_orders['comm_status'] == 'Đã chi']['total_comm'].sum()
-                total_pending = df_orders[df_orders['comm_status'] != 'Đã chi']['total_comm'].sum()
-                m2.metric("Đã Thanh Toán", format_currency(total_paid))
-                m3.metric("Chưa Thanh Toán", format_currency(total_pending))
+                st.dataframe(comm_summary, use_container_width=True) [cite: 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143]
 
 if __name__ == "__main__":
-    if 'logged_in' not in st.session_state:
-        st.session_state.logged_in = False
-        st.session_state.user = {}
-        st.session_state.role = ""
-
-    if not st.session_state.logged_in:
-        login_page()
+    if 'logged_in' not in st.session_state: st.session_state.logged_in = False
+    if 'user' not in st.session_state: st.session_state.user = {}
+    if 'role' not in st.session_state: st.session_state.role = ""
+    if not st.session_state.logged_in: login_page()
     else:
-        try:
-            main_app()
+        try: main_app()
         except Exception as e:
-            st.error("⚠️ Đã xảy ra lỗi ứng dụng:")
-            st.code(traceback.format_exc())
+            st.error("⚠️ Lỗi hệ thống:")
+            st.code(traceback.format_exc()) [cite: 144]
