@@ -333,12 +333,12 @@ def create_pdf(order, title):
     
     if is_delivery:
         odate = datetime.now().strftime("%d/%m/%Y")
-        intro_text = "Cong ty TNHH SX KD TM An Loc Phat xin cam on su quan tam cua Quy khach hang den san pham va dich vu cua chung toi. Nay ban giao cac hang hoa va dich vu nhu sau:"
+        intro_text = "Công ty TNHH SX KD TM An Lộc Phát xin cám ơn sự quan tâm của Quý khách hàng đến sản phẩm và dịch vụ của chúng tôi.  Nay bàn giao các hàng hóa và dịch vụ như sau:"
     else:
         raw_date = order.get('date', '')
         try: odate = datetime.strptime(raw_date, "%Y-%m-%d").strftime("%d/%m/%Y")
         except: odate = raw_date
-        intro_text = "Cong ty TNHH SX KD TM An Loc Phat xin cam on su quan tam cua Quy khach hang den san pham va dich vu cua chung toi. Xin tran trong gui toi Quy khach hang bao gia nhu sau:"
+        intro_text = "Công ty TNHH SX KD TM An Lộc Phát xin cám ơn sự quan tâm của Quý khách hàng đến sản phẩm và dịch vụ của chúng tôi. Xin trân trọng gửi tới Quý  khách hàng báo giá như sau:"
 
     cust = order.get('customer', {})
     items = order.get('items', [])
