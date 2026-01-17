@@ -365,21 +365,45 @@ def create_pdf(order, title):
     total_vat = 0
     
     for i, item in enumerate(items):
+        # --- PHẦN VẼ BẢNG TRONG HÀM create_pdf ---
+    for i, item in enumerate(items):
         try: 
             price = float(item.get('price', 0))
             qty = float(item.get('qty', 0))
             line_total = price * qty
             vat_rate = float(item.get('vat_rate', 0))
             vat_val = line_total * (vat_rate / 100)
-        except: line_total = 0; vat_val = 0
+        except: 
+            line_total = 0; vat_val = 0
+            
         sum_items_total += line_total
         total_vat += vat_val
+        
+        # Lưu vị trí Y bắt đầu của dòng để đồng bộ độ cao các cột
+        start_y = pdf.get_y()
+        
+        # Cột STT
         pdf.cell(10, 8, str(i+1), 1, 0, 'C')
-        pdf.cell(75, 8, txt(item.get('name', '')), 1, 0)
-        pdf.cell(15, 8, txt(item.get('unit', '')), 1, 0, 'C')
-        pdf.cell(15, 8, txt(str(item.get('qty', 0))), 1, 0, 'C')
-        pdf.cell(35, 8, format_currency(price), 1, 0, 'R')
-        pdf.cell(40, 8, format_currency(line_total), 1, 1, 'R')
+        
+        # Cột Tên hàng / Quy cách (Sử dụng multi_cell để tự động xuống dòng)
+        # Độ rộng 75, độ cao mỗi dòng con là 8
+        x_after_name = pdf.get_x() + 75
+        pdf.multi_cell(75, 8, txt(item.get('name', '')), 1, 'L')
+        
+        # Lấy vị trí Y sau khi vẽ xong cột tên hàng để biết dòng này cao bao nhiêu
+        end_y = pdf.get_y()
+        h = end_y - start_y # Độ cao thực tế của dòng sau khi xuống dòng
+        
+        # Quay lại vị trí cũ để vẽ các cột còn lại với độ cao tương ứng
+        pdf.set_xy(x_after_name, start_y)
+        
+        pdf.cell(15, h, txt(item.get('unit', '')), 1, 0, 'C')
+        pdf.cell(15, h, txt(str(item.get('qty', 0))), 1, 0, 'C')
+        pdf.cell(35, h, format_currency(price), 1, 0, 'R')
+        pdf.cell(40, h, format_currency(line_total), 1, 1, 'R')
+        
+        # Đảm bảo con trỏ PDF ở đúng vị trí cho dòng tiếp theo
+        pdf.set_y(end_y)
     
     final_total = sum_items_total + total_vat
     
