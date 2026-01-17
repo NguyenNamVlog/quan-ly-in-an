@@ -398,7 +398,8 @@ def create_pdf(order, title):
         pdf.set_xy(95, start_y) # 10 (STT) + 10 (lề trái) + 75 (Tên hàng) = 95
         
         pdf.cell(15, h, txt(item.get('unit', '')), 1, 0, 'C')
-        pdf.cell(15, h, txt(str(item.get('qty', 0))), 1, 0, 'C')
+        pdf.cell(15, h, format_currency(qty), 1, 0, 'R')
+        # pdf.cell(15, h, txt(str(item.get('qty', 0))), 1, 0, 'C')
         pdf.cell(35, h, format_currency(price), 1, 0, 'R')
         pdf.cell(40, h, format_currency(line_total), 1, 1, 'R')
         
