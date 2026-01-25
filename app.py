@@ -702,21 +702,48 @@ def main_app():
                     st.write("💳 **THANH TOÁN & CẬP NHẬT (Admin Only)**")
                     tab_pay, tab_edit = st.tabs(["💸 Thu Tiền", "✏️ Sửa Đơn Hàng"])
                     
-                    with tab_pay:
-                        c_p1, c_p2 = st.columns(2)
-                        pay_method = c_p1.radio("Hình thức:", ["Một phần", "Toàn bộ"], horizontal=True, key=f"pm_{oid}")
-                        pay_val = float(debt) if pay_method == "Toàn bộ" else c_p2.number_input("Nhập số tiền thu:", 0.0, float(debt), float(debt), key=f"p_val_{oid}")
-                        pay_via = c_p2.selectbox("Hình thức thanh toán:", ["TM", "CK"], key=f"via_{oid}")
-                        st.write(f"👉 Xác nhận thu: **{format_currency(pay_val)}** ({pay_via})")
-                        if st.button("Xác nhận Thu Tiền", key=f"cf_pay_{oid}"):
-                            if pay_val > 0:
-                                new_st = status_filter
-                                pay_stat_new = "Đã TT" if (debt - pay_val) <= 0 else "Cọc/Còn nợ"
-                                if (debt - pay_val) <= 0 and status_filter == "Công nợ": new_st = "Hoàn thành" 
-                                update_order_status(oid, new_st, pay_stat_new, pay_val)
-                                save_cash_log(datetime.now().strftime("%Y-%m-%d"), "Thu", pay_val, pay_via, f"Thu tiền đơn {oid}")
-                                st.success("Thành công!"); time.sleep(1); st.rerun()
-                            else: st.warning("Số tiền phải > 0")
+                 with tab_pay:
+    c_p1, c_p2 = st.columns(2)
+    pay_method = c_p1.radio("Hình thức:", ["Một phần", "Toàn bộ"], horizontal=True, key=f"pm_{oid}")
+    
+    # Tính toán số tiền nợ hiện tại
+    current_debt = float(debt) 
+    
+    pay_val = current_debt if pay_method == "Toàn bộ" else c_p2.number_input("Nhập số tiền thu:", 0.0, current_debt, current_debt, key=f"p_val_{oid}")
+    pay_via = c_p2.selectbox("Hình thức thanh toán:", ["TM", "CK"], key=f"via_{oid}")
+    
+    st.write(f"👉 Xác nhận thu: **{format_currency(pay_val)}** ({pay_via})")
+    
+    if st.button("Xác nhận Thu Tiền", key=f"cf_pay_{oid}"):
+        if pay_val > 0:
+            # TÍNH TOÁN CÒN NỢ SAU KHI THU
+            remaining_debt = current_debt - pay_val
+            
+            # LOGIC CHUYỂN TRẠNG THÁI TỰ ĐỘNG
+            new_status = status_filter # Mặc định giữ nguyên trạng thái cũ (Công nợ)
+            
+            # Nếu nợ bằng 0 (hoặc nhỏ hơn do làm tròn), chuyển sang Hoàn thành
+            if remaining_debt <= 0:
+                new_status = "Hoàn thành"
+                payment_status_new = "Đã TT"
+            else:
+                payment_status_new = "Cọc/Còn nợ"
+
+            # Cập nhật vào Database
+            if update_order_status(oid, new_status, payment_status_new, pay_val):
+                # Lưu vào sổ quỹ
+                save_cash_log(
+                    datetime.now().strftime("%Y-%m-%d"), 
+                    "Thu", 
+                    pay_val, 
+                    pay_via, 
+                    f"Thu tiền đơn {oid} - Chuyển {new_status}"
+                )
+                st.success(f"Đã cập nhật! Đơn hàng chuyển sang: {new_status}")
+                time.sleep(1)
+                st.rerun()
+        else:
+            st.warning("Số tiền phải lớn hơn 0")
 
                     with tab_edit:
                         with st.form(f"form_edit_{oid}"):
