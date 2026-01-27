@@ -40,18 +40,25 @@ def read_money_vietnamese(amount):
     try: return num2words(amount, lang='vi').capitalize() + " đồng chẵn."
     except: return "..................... đồng."
 
-# --- KẾT NỐI GOOGLE SHEETS ---
+# --- KẾT NỐI GOOGLE SHEETS (ĐÃ THÊM DEBUG) ---
 @st.cache_resource
 def get_gspread_client():
     try:
-        if "service_account" not in st.secrets: return None
+        if "service_account" not in st.secrets:
+            st.error("❌ Lỗi: Không tìm thấy mục [service_account] trong st.secrets")
+            return None
+        
         creds_dict = dict(st.secrets["service_account"])
         if "private_key" in creds_dict:
             creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
         return gspread.authorize(creds)
-    except: return None
+    except Exception as e:
+        # Dòng này cực kỳ quan trọng để bắt lỗi cụ thể
+        st.error(f"⚠️ Lỗi kết nối Google: {e}")
+        return None
 
 # --- CUSTOMER MANAGEMENT ---
 def fetch_customers():
