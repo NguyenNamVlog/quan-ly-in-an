@@ -132,7 +132,7 @@ def change_password(username, new_pass):
 def check_login(username, password):
     users = get_users_db()
     # --- DÒNG KIỂM TRA (CHÈN VÀO ĐÂY) ---
-    st.write("Dữ liệu nhân viên đọc được từ Sheet:", users) 
+    # st.write("Dữ liệu nhân viên đọc được từ Sheet:", users) 
     # ------------------------------------
     for u in users:
         if str(u['username']).strip() == username and str(u['password']).strip() == password:
