@@ -333,7 +333,15 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt('Điện thoại: 0251 777 6868       Email: anlocphat68.ltd@gmail.com'), 0, 1, 'C')
         pdf.cell(0, 5, txt('Số tài khoản: 451557254 – Ngân hàng TMCP Việt Nam Thịnh Vượng - CN Đồng Nai'), 0, 1, 'C')
         pdf.ln(2)
-
+    # --- CHÈN CON DẤU VÀO ĐÂY ---
+    STAMP_FILE = 'con_dau.png' # Đảm bảo file này đã được tải lên thư mục gốc
+    if os.path.exists(STAMP_FILE):
+        try:
+            # x=15: cách lề trái 1.5cm | y=12: cách lề trên 1.2cm | w=35: độ rộng 3.5cm
+            # Bạn có thể điều chỉnh tọa độ x, y để con dấu nằm đúng vị trí mong muốn
+            pdf.image(STAMP_FILE, x=15, y=12, w=35)
+        except:
+            pass
     pdf.set_font_size(16)
     pdf.cell(0, 8, txt(title), new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.set_font_size(11)
