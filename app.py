@@ -112,17 +112,6 @@ def get_users_db():
 def change_password(username, new_pass):
     client = get_gspread_client()
     if not client: return False
-def check_login(username, password):
-    users = get_users_db()
-    
-    # --- DÒNG KIỂM TRA (CHÈN VÀO ĐÂY) ---
-    st.write("Dữ liệu nhân viên đọc được từ Sheet:", users) 
-    # ------------------------------------
-
-    for u in users:
-        if str(u['username']).strip() == username and str(u['password']).strip() == password:
-            return u
-    return None  
     try:
         sh = client.open_by_url(SHEET_URL)
         ws = sh.worksheet("Users")
@@ -135,6 +124,9 @@ def check_login(username, password):
 
 def check_login(username, password):
     users = get_users_db()
+    # --- DÒNG KIỂM TRA (CHÈN VÀO ĐÂY) ---
+    st.write("Dữ liệu nhân viên đọc được từ Sheet:", users) 
+    # ------------------------------------
     for u in users:
         if str(u['username']).strip() == username and str(u['password']).strip() == password:
             return u
