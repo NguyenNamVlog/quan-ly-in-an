@@ -339,7 +339,7 @@ def create_pdf(order, title):
         try:
             # x=15: cách lề trái 1.5cm | y=12: cách lề trên 1.2cm | w=35: độ rộng 3.5cm
             # Bạn có thể điều chỉnh tọa độ x, y để con dấu nằm đúng vị trí mong muốn
-            pdf.image(STAMP_FILE, x=15, y=12, w=35)
+            pdf.image(STAMP_FILE, x=15, y=40, w=35)
         except:
             pass
     pdf.set_font_size(16)
