@@ -94,7 +94,7 @@ def init_users():
             ws.append_row(["username", "password", "role"])
             default_users = [
                 ["Nam", "Emyeu0901", "admin"],
-                ["Duong", "Duong-", "staff"],
+                ["Duong", "Duong", "staff"],
                 ["Van", "Van", "staff"]
             ]
             for u in default_users: ws.append_row(u)
