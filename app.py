@@ -27,7 +27,7 @@ def remove_accents(input_str):
     return "".join([c for c in nfkd_form if not unicodedata.combining(c)]) [cite: 1]
 
 def format_currency(value):
-    if value is None: return "0" [cite: 2]
+    if value is None: return "0" [cite: 1, 2]
     try:
         val = float(value) [cite: 2]
         if val.is_integer():
@@ -40,8 +40,8 @@ def read_money_vietnamese(amount):
     try: return num2words(amount, lang='vi').capitalize() + " đồng chẵn." [cite: 2]
     except: return "..................... đồng." [cite: 3]
 
-# --- KẾT NỐI GOOGLE SHEETS (ĐÃ THÊM DEBUG) ---
-@st.cache_resource
+# --- KẾT NỐI GOOGLE SHEETS ---
+@st.cache_resource [cite: 3]
 def get_gspread_client():
     try:
         if "service_account" not in st.secrets: [cite: 3]
@@ -66,7 +66,7 @@ def fetch_customers():
     try:
         sh = client.open_by_url(SHEET_URL) [cite: 5]
         try: ws = sh.worksheet("Customers") [cite: 5]
-        except: return [] [cite: 5]
+        except: return []  [cite: 5]
         return ws.get_all_records() [cite: 5]
     except: return [] [cite: 5]
 
@@ -80,13 +80,13 @@ def save_customer_db(name, phone, address):
             ws = sh.add_worksheet("Customers", 1000, 5) [cite: 6]
             ws.append_row(["phone", "name", "address", "last_order"]) [cite: 6]
         
-        try: phones = ws.col_values(1) [cite: 6]
+        try: phones = ws.col_values(1)  [cite: 6]
         except: phones = [] [cite: 6]
 
-        if phone not in phones: [cite: 6]
+        if phone not in phones:
             ws.append_row([str(phone), name, address, datetime.now().strftime("%Y-%m-%d")]) [cite: 7]
-            st.cache_data.clear() [cite: 7]
-    except: pass
+            st.cache_data.clear()  [cite: 7]
+    except: pass [cite: 7]
 
 # --- USER MANAGEMENT ---
 def init_users():
@@ -104,7 +104,7 @@ def init_users():
                 ["Van", "Van", "staff"] [cite: 8]
             ] [cite: 8]
             for u in default_users: ws.append_row(u) [cite: 8, 9]
-    except: pass
+    except: pass [cite: 9]
 
 def get_users_db():
     client = get_gspread_client() [cite: 9]
@@ -120,9 +120,9 @@ def change_password(username, new_pass):
     if not client: return False [cite: 9]
     try:
         sh = client.open_by_url(SHEET_URL) [cite: 9]
-        ws = sh.worksheet("Users") [cite: 9, 10]
+        ws = sh.worksheet("Users") [cite: 10]
         cell = ws.find(username) [cite: 10]
-        if cell: [cite: 10]
+        if cell:
             ws.update_cell(cell.row, 2, new_pass) [cite: 10]
             return True [cite: 10]
         return False [cite: 10]
@@ -130,7 +130,7 @@ def change_password(username, new_pass):
 
 def check_login(username, password):
     users = get_users_db() [cite: 10]
-    for u in users: [cite: 11]
+    for u in users:
         if str(u['username']).strip() == username and str(u['password']).strip() == password: [cite: 11]
             return u [cite: 11]
     return None [cite: 11]
@@ -143,8 +143,8 @@ def fetch_all_orders():
         sh = client.open_by_url(SHEET_URL) [cite: 11]
         ws = sh.worksheet("Orders") [cite: 11]
         raw_data = ws.get_all_records() [cite: 11]
-        processed_data = [] [cite: 11, 12]
-        for row in raw_data: [cite: 12]
+        processed_data = [] [cite: 12]
+        for row in raw_data:
             try:
                 cust = row.get('customer') [cite: 12]
                 row['customer'] = json.loads(cust) if isinstance(cust, str) and cust else (cust if isinstance(cust, dict) else {}) [cite: 12]
@@ -153,7 +153,7 @@ def fetch_all_orders():
                 fin = row.get('financial') [cite: 13]
                 row['financial'] = json.loads(fin) if isinstance(fin, str) and fin else (fin if isinstance(fin, dict) else {}) [cite: 13]
                 processed_data.append(row) [cite: 13]
-            except: continue [cite: 13]
+            except: continue
         return processed_data [cite: 14]
     except: return [] [cite: 14]
 
@@ -170,7 +170,7 @@ def update_order_status(order_id, new_status, new_payment_status=None, paid_amou
         ws.update_cell(row_idx, 3, new_status) [cite: 15]
         if new_payment_status: ws.update_cell(row_idx, 4, new_payment_status) [cite: 15]
         
-        if paid_amount > 0: [cite: 15]
+        if paid_amount > 0:
             current_fin_str = ws.cell(row_idx, 7).value [cite: 15]
             try: fin = json.loads(current_fin_str) [cite: 15]
             except: fin = {} [cite: 15]
@@ -208,7 +208,7 @@ def delete_order(order_id):
         sh = client.open_by_url(SHEET_URL) [cite: 18]
         ws = sh.worksheet("Orders") [cite: 18]
         cell = ws.find(order_id) [cite: 18]
-        if cell: [cite: 18]
+        if cell:
             ws.delete_rows(cell.row) [cite: 18]
             st.cache_data.clear() [cite: 19]
             return True [cite: 19]
@@ -231,8 +231,8 @@ def edit_order_info(order_id, new_cust, new_total, new_items, new_profit, new_co
         old_fin_str = ws.cell(r, 7).value [cite: 20]
         try: fin = json.loads(old_fin_str) [cite: 20]
         except: fin = {} [cite: 20]
-        fin['total'] = new_total [cite: 20]
-        fin['debt'] = new_total - float(fin.get('paid', 0)) [cite: 20, 21]
+        fin['total'] = new_total [cite: 21]
+        fin['debt'] = new_total - float(fin.get('paid', 0)) [cite: 21]
         fin['total_profit'] = new_profit [cite: 21]
         fin['total_comm'] = new_comm [cite: 21]
         ws.update_cell(r, 7, json.dumps(fin, ensure_ascii=False)) [cite: 21]
@@ -290,11 +290,11 @@ def gen_id():
     orders = fetch_all_orders() [cite: 25]
     year = datetime.now().strftime("%y") [cite: 25]
     count = 0 [cite: 25]
-    for o in orders: [cite: 25]
+    for o in orders:
         if str(o.get('order_id', '')).endswith(year): count += 1 [cite: 25]
     return f"{count+1:03d}/DH.{year}" [cite: 25]
 
-# --- HÀM CHO TÍNH NĂNG KHÁCH THÊM (CẬP NHẬT MỚI) ---
+# --- HÀM CHO TÍNH NĂNG KHÁCH THÊM (MỚI) ---
 def fetch_extra_customers():
     client = get_gspread_client()
     if not client: return []
@@ -369,7 +369,7 @@ def create_pdf(order, title):
             pdf.set_font('ArialLocal', '', 11) [cite: 26]
         except: SAFE_MODE = True [cite: 26]
     else: SAFE_MODE = True [cite: 26]
-    if SAFE_MODE: pdf.set_font('Helvetica', '', 11) [cite: 26]
+    if SAFE_MODE: pdf.set_font('Helvetica', '', 11) [cite: 27]
 
     def txt(text):
         if not text: return "" [cite: 27]
@@ -379,8 +379,8 @@ def create_pdf(order, title):
     if os.path.exists(HEADER_IMAGE): [cite: 27]
         try:
             pdf.image(HEADER_IMAGE, x=10, y=10, w=190) [cite: 27]
-            pdf.set_y(pdf.get_y() + 35) [cite: 27]
-        except: pass [cite: 27]
+            pdf.set_y(pdf.get_y() + 35)  [cite: 27]
+        except: pass
     else:
         pdf.set_font_size(14) [cite: 27]
         pdf.cell(0, 8, txt('CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT'), 0, 1, 'C') [cite: 28]
@@ -395,16 +395,15 @@ def create_pdf(order, title):
     if os.path.exists(STAMP_FILE): [cite: 29]
         try:
             pdf.image(STAMP_FILE, x=15, y=32, w=35) [cite: 30]
-        except: [cite: 30]
-            pass [cite: 30]
+        except: pass
     pdf.set_font_size(16) [cite: 30]
     pdf.cell(0, 8, txt(title), new_x="LMARGIN", new_y="NEXT", align='C') [cite: 30]
     pdf.set_font_size(11) [cite: 30]
     
-    oid = order.get('order_id', '') [cite: 30, 31]
+    oid = order.get('order_id', '') [cite: 30]
     is_delivery = "GIAO HÀNG" in title.upper() [cite: 31]
     
-    if is_delivery: [cite: 31]
+    if is_delivery:
         odate = datetime.now().strftime("%d/%m/%Y") [cite: 31]
         intro_text = "Công ty TNHH SX KD TM An Lộc Phát xin cám ơn sự quan tâm của Quý khách hàng đến sản phẩm và dịch vụ của chúng tôi.  Nay bàn giao các hàng hóa và dịch vụ như sau:" [cite: 31]
     else:
@@ -437,7 +436,7 @@ def create_pdf(order, title):
     sum_items_total = 0 [cite: 34]
     total_vat = 0 [cite: 34]
     
-    for i, item in enumerate(items): [cite: 34]
+    for i, item in enumerate(items):
         try: 
             price = float(item.get('price', 0)) [cite: 35]
             qty = float(item.get('qty', 0)) [cite: 35]
@@ -485,7 +484,7 @@ def create_pdf(order, title):
     pdf.ln(3) [cite: 42]
 
     pdf.set_x(10) [cite: 42]
-    if is_delivery: [cite: 42]
+    if is_delivery:
         pdf.cell(95, 5, txt("NGƯỜI NHẬN"), 0, 0, 'C') [cite: 42]
         pdf.cell(95, 5, txt("NGƯỜI GIAO"), 0, 1, 'C') [cite: 42]
         pdf.ln(20)  [cite: 42]
@@ -496,7 +495,7 @@ def create_pdf(order, title):
     pdf.ln(2) [cite: 42]
     pdf.set_font_size(10) [cite: 42]
     pdf.set_x(10) [cite: 42]
-    if is_delivery: [cite: 42]
+    if is_delivery:
         pdf.multi_cell(190, 5, txt("* Quý khách vui lòng kiểm tra và phản hồi ngay về tình trạng hàng hoá khi giao nhận!")) [cite: 43]
         pdf.set_x(10) [cite: 43]
         pdf.multi_cell(190, 5, txt("* Giao hàng miễn phí trong nội thành thành phố Biên Hoà với đơn hàng >1.000.000đ")) [cite: 43]
@@ -513,17 +512,17 @@ def create_pdf(order, title):
         pdf.ln(2) [cite: 45]
         pdf.set_x(10) [cite: 45]
         pdf.multi_cell(190, 5, txt("Rất mong nhận được sự hợp tác của Quý khách hàng! Trân trọng! ")) [cite: 45, 46]
-    return bytes(pdf.output())
+    return bytes(pdf.output()) [cite: 46]
 
 # --- LOGIN PAGE ---
 def login_page():
-    st.title("🔐 Đăng Nhập Hệ Thống")
+    st.title("🔐 Đăng Nhập Hệ Thống") [cite: 46]
     init_users() [cite: 46]
-    with st.form("login_form"):
-        username = st.text_input("Tên đăng nhập")
-        password = st.text_input("Mật khẩu", type="password")
-        if st.form_submit_button("Đăng nhập", type="primary"):
-            user = check_login(username, password)
+    with st.form("login_form"): [cite: 46]
+        username = st.text_input("Tên đăng nhập") [cite: 46]
+        password = st.text_input("Mật khẩu", type="password") [cite: 46]
+        if st.form_submit_button("Đăng nhập", type="primary"): [cite: 46]
+            user = check_login(username, password) [cite: 46]
             if user:
                 st.session_state.logged_in = True [cite: 47]
                 st.session_state.user = user [cite: 47]
@@ -536,12 +535,12 @@ def login_page():
 # --- MAIN APP ---
 def main_app():
     is_admin = st.session_state.role == 'admin' [cite: 48]
-    with st.sidebar:
+    with st.sidebar: [cite: 48]
         st.write(f"👤 **{st.session_state.user['username']}** ({st.session_state.role})") [cite: 48]
-        if st.button("Đăng xuất"):
+        if st.button("Đăng xuất"): [cite: 48]
             st.session_state.logged_in = False [cite: 48]
             st.rerun() [cite: 48]
-        with st.expander("🔑 Đổi mật khẩu"):
+        with st.expander("🔑 Đổi mật khẩu"): [cite: 48]
             new_p1 = st.text_input("Mật khẩu mới", type="password") [cite: 49]
             new_p2 = st.text_input("Nhập lại", type="password") [cite: 49]
             if st.button("Lưu mật khẩu"): [cite: 49]
@@ -551,24 +550,24 @@ def main_app():
                     else: st.error("Lỗi hệ thống") [cite: 50]
                 else: st.error("Mật khẩu không khớp") [cite: 50]
 
-    st.title("Hệ Thống In Ấn An Lộc Phát")
+    st.title("Hệ Thống In Ấn An Lộc Phát") [cite: 50]
     if "service_account" not in st.secrets: [cite: 50]
         st.error("Lỗi: Chưa cấu hình st.secrets") [cite: 50]
         st.stop() [cite: 50]
 
-    menu = st.sidebar.radio("CHỨC NĂNG", [
+    menu = st.sidebar.radio("CHỨC NĂNG", [ [cite: 50]
         "1. Tạo Báo Giá", 
         "2. Quản Lý Đơn Hàng (Pipeline)", 
         "3. Khách Thêm Chiết Khấu", 
         "4. Sổ Quỹ", 
         "5. Dashboard & Báo Cáo"
-    ])
+    ]) [cite: 50, 51, 52]
 
     if 'cart' not in st.session_state: st.session_state.cart = [] [cite: 52]
     if 'last_order' not in st.session_state: st.session_state.last_order = None [cite: 52]
 
     # --- TAB 1: TẠO BÁO GIÁ ---
-    if menu == "1. Tạo Báo Giá":
+    if menu == "1. Tạo Báo Giá": [cite: 52, 53]
         st.header("📝 Tạo Báo Giá Mới") [cite: 53]
         if 'c_name' not in st.session_state: st.session_state.c_name = "" [cite: 53]
         if 'c_phone' not in st.session_state: st.session_state.c_phone = "" [cite: 53]
@@ -659,7 +658,7 @@ def main_app():
                         "customer": {"name": name, "phone": phone, "address": addr}, [cite: 68]
                         "items": st.session_state.cart, [cite: 68]
                         "financial": { [cite: 68]
-                            "total": total_final, "paid": 0, "debt": total_final, "staff": staff,  [cite: 68, 69]
+                            "total": total_final, "paid": 0, "debt": total_final, "staff": staff,  [cite: 68]
                             "total_profit": total_profit, "total_comm": total_comm, "commission_status": "Chưa chi" [cite: 69]
                         } [cite: 68]
                     } [cite: 66]
@@ -676,7 +675,7 @@ def main_app():
             st.download_button("🖨️ Tải PDF", pdf_bytes, f"BG_{oid}.pdf", "application/pdf", type="primary") [cite: 71]
 
     # --- TAB 2: QUẢN LÝ ---
-    elif menu == "2. Quản Lý Đơn Hàng (Pipeline)":
+    elif menu == "2. Quản Lý Đơn Hàng (Pipeline)": [cite: 72]
         st.header("🏭 Quy Trình Sản Xuất") [cite: 72]
         all_orders = fetch_all_orders() [cite: 72]
         tabs = st.tabs(["1️⃣ Báo Giá", "2️⃣ Thiết Kế", "3️⃣ Sản Xuất", "4️⃣ Giao Hàng", "5️⃣ Công Nợ", "✅ Hoàn Thành"]) [cite: 72]
@@ -823,21 +822,18 @@ def main_app():
     elif menu == "3. Khách Thêm Chiết Khấu":
         st.header("👥 Quản Lý Khách Thêm (Gửi Giá Chiết Khấu)")
         
-        # Tạo state lưu trữ id của dòng đang được chọn chỉnh sửa
         if 'editing_extra_id' not in st.session_state:
             st.session_state.editing_extra_id = None
 
         extra_list = fetch_extra_customers()
         df_extra = pd.DataFrame(extra_list)
         
-        # Thiết lập giá trị mặc định cho Form nhập liệu
         default_name = ""
         default_before = 0.0
         default_actual = 0.0
         default_rate = 10.0
         form_mode = "Thêm Mới"
 
-        # Nếu đang trong chế độ sửa, lấy dữ liệu cũ đắp vào Form
         if st.session_state.editing_extra_id and not df_extra.empty:
             match_row = df_extra[df_extra['id'].astype(str) == str(st.session_state.editing_extra_id)]
             if not match_row.empty:
@@ -855,7 +851,6 @@ def main_app():
             ex_actual = col_f2.number_input("Số tiền thực làm", min_value=0.0, value=default_actual, step=10000.0)
             ex_rate = col_f3.number_input("Thuế suất (%)", min_value=0.0, max_value=100.0, value=default_rate, step=1.0)
             
-            # Tính toán logic các trường phụ thuộc theo công thức yêu cầu
             ex_no_work = ex_before - ex_actual
             ex_pit = (ex_rate / 100) * ex_no_work
             ex_refund = ex_before - ex_actual - ex_pit
@@ -881,14 +876,12 @@ def main_app():
                     st.error("Lỗi: Số tiền trước thuế không thể nhỏ hơn số tiền thực làm!")
                 else:
                     if st.session_state.editing_extra_id is None:
-                        # Thực hiện Thêm Mới
                         gen_extra_id = int(time.time())
                         if save_extra_customer(gen_extra_id, ex_name, ex_before, ex_actual, ex_no_work, ex_rate, ex_pit, ex_refund, "Chưa chi", datetime.now().strftime("%Y-%m-%d")):
                             st.success("Đã thêm giao dịch khách thêm mới thành công!")
                             time.sleep(0.5)
                             st.rerun()
                     else:
-                        # Thực hiện cập nhật (Giữ nguyên trạng thái cũ của dòng)
                         old_status = str(match_row.iloc[0]['status'])
                         if update_extra_customer(st.session_state.editing_extra_id, ex_name, ex_before, ex_actual, ex_no_work, ex_rate, ex_pit, ex_refund, old_status):
                             st.success("Cập nhật thông tin thành công!")
@@ -917,7 +910,6 @@ def main_app():
                 st.markdown(f"⚙️ **Thao tác xử lý dòng lệnh khách thêm:** `{selected_row_data['name']}`")
                 c_action1, c_action2, c_action3, _ = st.columns([1.5, 1, 1, 3])
                 
-                # 1. Nút duyệt chi chuyển trạng thái
                 if curr_status == "Chưa chi":
                     if c_action1.button("✅ Duyệt Chi Khách này", key=f"btn_pay_ex_{curr_id}", type="primary"):
                         if update_extra_customer(curr_id, selected_row_data['name'], selected_row_data['before_tax'], selected_row_data['actual'], selected_row_data['no_work'], selected_row_data['tax_rate'], selected_row_data['tax_pit'], selected_row_data['refund'], "Đã chi"):
@@ -927,12 +919,10 @@ def main_app():
                 else:
                     c_action1.caption("✅ Đã hoàn tất chi")
 
-                # 2. Nút chỉnh sửa
                 if c_action2.button("✏️ Sửa dòng này", key=f"btn_edit_ex_{curr_id}"):
                     st.session_state.editing_extra_id = curr_id
                     st.rerun()
 
-                # 3. Nút xóa (chỉ Admin được phép xóa)
                 if is_admin:
                     if c_action3.button("🗑️ Xóa dòng này", key=f"btn_del_ex_{curr_id}"):
                         if delete_extra_customer(curr_id):
@@ -943,10 +933,10 @@ def main_app():
                     c_action3.caption("🔒 Xóa (Admin only)")
 
     # --- TAB 4: SỔ QUỸ (CHỈ TM) ---
-    elif menu == "4. Sổ Quỹ":
-        st.header("📊 Sổ Quỹ Tiền Mặt") [cite: 108]
-        df = pd.DataFrame(fetch_cashbook()) [cite: 108]
-        if df.empty: df = pd.DataFrame(columns=["Date", "Content", "Amount", "TM/CK", "Note"]) [cite: 108]
+    elif menu == "4. Sổ Quỹ": [cite: 107]
+        st.header("📊 Sổ Quỹ Tiền Mặt") [cite: 107]
+        df = pd.DataFrame(fetch_cashbook()) [cite: 107]
+        if df.empty: df = pd.DataFrame(columns=["Date", "Content", "Amount", "TM/CK", "Note"]) [cite: 107]
         if 'date' in df.columns: df.rename(columns={'date': 'Date', 'type': 'Content', 'amount': 'Amount', 'desc': 'Note'}, inplace=True) [cite: 108]
         for col in ["Date", "Content", "Amount", "TM/CK", "Note"]:  [cite: 108]
             if col not in df.columns: df[col] = "" [cite: 108]
@@ -993,8 +983,8 @@ def main_app():
         else: st.warning("🔒 Chỉ Admin được ghi sổ.") [cite: 115]
 
     # --- TAB 5: DASHBOARD & BÁO CÁO ---
-    elif menu == "5. Dashboard & Báo Cáo":
-        st.header("📈 Dashboard & Báo Cáo Quản Trị") [cite: 116]
+    elif menu == "5. Dashboard & Báo Cáo": [cite: 115]
+        st.header("📈 Dashboard & Báo Cáo Quản Trị") [cite: 115]
         
         orders = fetch_all_orders() [cite: 116]
         cashbook = fetch_cashbook() [cite: 116]
@@ -1014,11 +1004,10 @@ def main_app():
             df_orders['cust_name'] = df_orders['customer'].apply(lambda x: x.get('name', 'Unknown')) [cite: 118]
             df_orders['comm_status'] = df_orders['financial'].apply(lambda x: x.get('commission_status', 'Chưa chi')) [cite: 118]
             
-            # Khởi tạo tabs gồm báo cáo khách thêm yêu cầu mới
             t1, t2, t3, t4, t5, t6 = st.tabs(["1. Tổng Quan", "2. Báo Cáo Lãi/Lỗ (P&L)", "3. Phân Tích Doanh Thu", "4. Công Nợ", "5. Hoa Hồng", "6. Báo Cáo Khách Thêm"]) [cite: 118, 119, 120]
             
             # 1. TỔNG QUAN
-            with t1:
+            with t1: [cite: 120]
                 st.subheader("Trạng Thái Đơn Hàng") [cite: 120]
                 status_counts = df_orders['status'].value_counts().reset_index() [cite: 120]
                 status_counts.columns = ['Status', 'Count'] [cite: 120]
@@ -1032,7 +1021,7 @@ def main_app():
                 k3.metric("Hoàn thành", len(df_orders[df_orders['status'] == 'Hoàn thành'])) [cite: 122]
 
             # 2. P&L REPORT
-            with t2:
+            with t2: [cite: 123]
                 if is_admin: [cite: 123]
                     st.subheader("Báo Cáo Kết Quả Kinh Doanh (Ước tính)") [cite: 123]
                     revenue = df_orders['total_revenue'].sum() [cite: 124]
@@ -1041,7 +1030,7 @@ def main_app():
                     for o in orders: [cite: 125]
                         items = o.get('items', []) [cite: 125]
                         for i in items: [cite: 126]
-                            try: [cite: 126]
+                            try:
                                 total_cogs += float(i.get('qty', 0)) * float(i.get('cost', 0)) [cite: 126]
                             except: pass [cite: 127]
                             
@@ -1137,14 +1126,12 @@ def main_app():
                 if df_ex.empty:
                     st.info("Chưa ghi nhận dữ liệu Khách thêm.")
                 else:
-                    # Lọc danh sách những người ở trạng thái 'Chưa chi' theo yêu cầu số 3
                     df_unpaid = df_ex[df_ex['status'] == "Chưa chi"].copy()
                     if df_unpaid.empty:
                         st.success("🎉 Tuyệt vời! Hệ thống không có khách thêm nào chưa chi.")
                     else:
                         st.metric("Tổng Số Tiền Còn Phải Chuyển Lại", format_currency(df_unpaid['refund'].sum()))
                         
-                        # Format hiển thị
                         df_report = df_unpaid[['date', 'name', 'refund']].copy()
                         df_report['refund'] = df_report['refund'].apply(format_currency)
                         df_report.columns = ["Ngày tạo", "Tên Khách Hàng", "Số Tiền Còn Chuyển Lại"]
@@ -1152,21 +1139,19 @@ def main_app():
 
 
 if __name__ == "__main__":
-    # --- ĐOẠN ĐÃ FIX LỖI KEYERROR: 'USERNAME' ---
-    if 'logged_in' not in st.session_state:
-        st.session_state.logged_in = False
+    if 'logged_in' not in st.session_state: [cite: 149]
+        st.session_state.logged_in = False [cite: 149]
     
-    # CHỈ khởi tạo dữ liệu rỗng nếu chưa từng đăng nhập.
-    # Không để ghi đè dữ liệu rỗng lên tài khoản đã đăng nhập mỗi lần reload trang!
+    # CHỈ khởi tạo dữ liệu rỗng nếu chưa từng đăng nhập thành công
     if not st.session_state.logged_in:
-        st.session_state.user = {}
-        st.session_state.role = ""
+        st.session_state.user = {} [cite: 150]
+        st.session_state.role = "" [cite: 150]
 
-    if not st.session_state.logged_in:
-        login_page()
+    if not st.session_state.logged_in: [cite: 150]
+        login_page() [cite: 150]
     else:
         try:
-            main_app()
+            main_app() [cite: 150]
         except Exception as e:
-            st.error("⚠️ Đã xảy ra lỗi ứng dụng:")
-            st.code(traceback.format_exc())
+            st.error("⚠️ Đã xảy ra lỗi ứng dụng:") [cite: 150]
+            st.code(traceback.format_exc()) [cite: 150]
