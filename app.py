@@ -291,13 +291,29 @@ def fetch_cashbook():
         return ws.get_all_records()
     except: return []
 
+
+# --- FIX LỖI ĐÁNH SỐ TRÙNG ORDER_ID TẠI HÀM NÀY ---
 def gen_id():
     orders = fetch_all_orders()
     year = datetime.now().strftime("%y")
-    count = 0
+    max_num = 0
+    
     for o in orders:
-        if str(o.get('order_id', '')).endswith(year): count += 1
-    return f"{count+1:03d}/DH.{year}"
+        oid = str(o.get('order_id', '')).strip()
+        # Định dạng chuẩn là "XXX/DH.YY" (Ví dụ: 116/DH.26)
+        if "/DH." + year in oid:
+            try:
+                # Tách lấy phần số thứ tự phía trước dấu gạch chéo
+                num_part = oid.split("/")[0]
+                num = int(num_part)
+                if num > max_num:
+                    max_num = num
+            except:
+                continue
+                
+    next_num = max_num + 1
+    return f"{next_num:03d}/DH.{year}"
+
 
 # --- DATABASE CHO KHÁCH THÊM ---
 def fetch_extra_customers():
@@ -698,7 +714,6 @@ def main_app():
             if event.selection.rows:
                 idx = event.selection.rows[0]
                 
-                # --- FIX LỖI INDEX OUT OF RANGE TẠI ĐÂY ---
                 if idx >= len(current_orders):
                     st.warning("Đang đồng bộ lại dữ liệu bảng đơn hàng...")
                     st.rerun()
@@ -856,7 +871,7 @@ def main_app():
                     
         with t_pipe:
             st.subheader("Quy Trình Duyệt Chi Khách Thêm")
-            p_tabs = st.tabs(["¼ Chưa Chi", "½ Đã Chi"])
+            p_tabs = st.tabs(["🔴 Chưa Chi", "🟢 Đã Chi"])
             
             with p_tabs[0]:
                 df_unpaid = df_extra[df_extra['status'] == 'Chưa chi'].copy()
