@@ -6,6 +6,7 @@ import os
 import requests
 import unicodedata
 import traceback
+import io
 from datetime import datetime
 from fpdf import FPDF
 from num2words import num2words
@@ -167,8 +168,10 @@ def update_order_status(order_id, new_status, new_payment_status=None, paid_amou
         if not cell: return False
         
         row_idx = cell.row
-        ws.update_cell(row_idx, 3, new_status)
-        if new_payment_status: ws.update_cell(row_idx, 4, new_payment_status)
+        if new_status: 
+            ws.update_cell(row_idx, 3, new_status)
+        if new_payment_status: 
+            ws.update_cell(row_idx, 4, new_payment_status)
         
         if paid_amount > 0:
             current_fin_str = ws.cell(row_idx, 7).value
@@ -176,6 +179,7 @@ def update_order_status(order_id, new_status, new_payment_status=None, paid_amou
             except: fin = {}
             fin['paid'] = float(fin.get('paid', 0)) + float(paid_amount)
             fin['debt'] = float(fin.get('total', 0)) - fin['paid']
+            if fin['debt'] < 0: fin['debt'] = 0
             ws.update_cell(row_idx, 7, json.dumps(fin, ensure_ascii=False))
             
         st.cache_data.clear()
@@ -233,6 +237,7 @@ def edit_order_info(order_id, new_cust, new_total, new_items, new_profit, new_co
         except: fin = {}
         fin['total'] = new_total
         fin['debt'] = new_total - float(fin.get('paid', 0))
+        if fin['debt'] < 0: fin['debt'] = 0
         fin['total_profit'] = new_profit
         fin['total_comm'] = new_comm
         ws.update_cell(r, 7, json.dumps(fin, ensure_ascii=False))
@@ -688,7 +693,7 @@ def main_app():
                     "TT Thanh Toán": o.get('payment_status'), "TT Hoa Hồng": fin.get('commission_status', 'Chưa chi')
                 })
             
-            event = st.dataframe(pd.DataFrame(table_data), use_container_width=True, hide_index=True, selection_mode="single-row", on_select="rerun")
+            event = st.dataframe(pd.DataFrame(table_data), use_container_width=True, hide_index=True, selection_mode="single-row", on_select="rerun", key=f"tbl_{status_filter}")
             
             if event.selection.rows:
                 idx = event.selection.rows[0]
@@ -702,6 +707,7 @@ def main_app():
                 fin = sel_order.get('financial', {})
                 total, paid = float(fin.get('total', 0)), float(fin.get('paid', 0))
                 debt = total - paid
+                if debt < 0: debt = 0
                 profit_val, comm_val = fin.get('total_profit', 0), fin.get('total_comm', 0)
                 comm_stat = fin.get('commission_status', 'Chưa chi')
 
@@ -765,8 +771,13 @@ def main_app():
                         if st.button("Xác nhận Thu Tiền", key=f"cf_pay_{oid}"):
                             if pay_val > 0:
                                 new_st = status_filter
-                                pay_stat_new = "Đã TT" if (debt - pay_val) <= 0 else "Cọc/Còn nợ"
-                                if (debt - pay_val) <= 0 and status_filter == "Công nợ": new_st = "Hoàn thành" 
+                                # Khử sai số dấu phẩy động bằng cách làm tròn hoặc so sánh với giá trị biên nhỏ
+                                is_fully_paid = (debt - pay_val) <= 10.0
+                                pay_stat_new = "Đã TT" if is_fully_paid else "Cọc/Còn nợ"
+                                
+                                # Tự động chuyển qua Hoàn thành nếu đã thu hết công nợ
+                                if is_fully_paid and status_filter == "Công nợ": 
+                                    new_st = "Hoàn thành" 
                                 update_order_status(oid, new_st, pay_stat_new, pay_val)
                                 save_cash_log(datetime.now().strftime("%Y-%m-%d"), "Thu", pay_val, pay_via, f"Thu tiền đơn {oid}")
                                 st.success("Thành công!"); time.sleep(1); st.rerun()
@@ -802,22 +813,20 @@ def main_app():
         with tabs[1]: render_tab_content("Thiết kế", "Sản xuất", "✅ Duyệt TK -> Sản Xuất", None)
         with tabs[2]: render_tab_content("Sản xuất", "Giao hàng", "✅ Xong -> Giao Hàng", None)
         with tabs[3]: render_tab_content("Giao hàng", "Công nợ", "✅ Giao Xong -> Công Nợ", "PHIẾU GIAO HÀNG")
-        with tabs[4]: render_tab_content("Công nợ", None, "", None)
+        with tabs[4]: render_tab_content("Công nợ", "Hoàn thành", "✅ Hoàn Thành Đơn Hàng", None)
         with tabs[5]: render_tab_content("Hoàn thành", None, "", None)
 
-    # --- TAB 3: KHÁCH THÊM (CẬP NHẬT MỚI YÊU CẦU) ---
+    # --- TAB 3: KHÁCH THÊM ---
     elif menu == "3. Khách Thêm":
         st.header("👥 Quản Lý Khách Thêm (Chiết khấu & Hoàn tiền)")
         
         t_add, t_pipe, t_report, t_manage = st.tabs(["➕ Nhập Khách Mới", "🏭 Duyệt Trạng Thái", "📊 Báo Cáo Hoàn Tiền", "⚙️ Sửa & Xóa"])
         
-        # Lấy dữ liệu hiện hành
         extra_data = fetch_extra_customers()
         df_extra = pd.DataFrame(extra_data)
         if df_extra.empty:
             df_extra = pd.DataFrame(columns=["id", "customer", "pre_tax", "actual", "not_done", "vat_rate", "pit_tax", "refund", "status"])
             
-        # 1. FORM NHẬP KHÁCH MỚI
         with t_add:
             st.subheader("Nhập Dữ Liệu Khách Hàng Chiết Khấu")
             with st.form("form_add_extra_customer", clear_on_submit=True):
@@ -827,7 +836,6 @@ def main_app():
                 ext_actual = ec2.number_input("Số tiền thực làm", min_value=0.0, step=10000.0, format="%.0f")
                 ext_vat_rate = ec3.number_input("Thuế suất (%)", min_value=0.0, max_value=100.0, value=10.0, step=1.0)
                 
-                # Tính toán tự động hiển thị trước khi submit
                 calc_not_done = ext_pre_tax - ext_actual
                 calc_pit_tax = (ext_vat_rate / 100) * calc_not_done
                 calc_refund = calc_not_done - calc_pit_tax
@@ -841,7 +849,6 @@ def main_app():
                             st.success("Đã thêm thành công!"); time.sleep(0.5); st.rerun()
                     else: st.error("Vui lòng điền tên khách hàng!")
                     
-        # 2. PIPELINE QUY TRÌNH DUYỆT TRẠNG THÁI
         with t_pipe:
             st.subheader("Quy Trình Duyệt Chi Khách Thêm")
             p_tabs = st.tabs(["🔴 Chưa Chi", "🟢 Đã Chi"])
@@ -851,7 +858,6 @@ def main_app():
                 if df_unpaid.empty:
                     st.info("Hiện không có hồ sơ khách thêm nào ở trạng thái Chưa Chi.")
                 else:
-                    # Tạo bảng hiển thị
                     disp_unpaid = df_unpaid.copy()
                     for c in ['pre_tax', 'actual', 'not_done', 'pit_tax', 'refund']:
                         disp_unpaid[c] = disp_unpaid[c].apply(format_currency)
@@ -864,7 +870,6 @@ def main_app():
                         st.write(f"👉 Bạn đã chọn hồ sơ của khách: **{selected_row['customer']}** - Số tiền: **{format_currency(selected_row['refund'])}**")
                         if st.button("✅ Phê Duyệt & Chuyển Trạng Thái Quá 'Đã Chi'", type="primary"):
                             update_extra_customer_status(selected_row['id'], "Đã chi")
-                            # Lưu vào sổ quỹ nếu là tiền mặt
                             save_cash_log(datetime.now().strftime("%Y-%m-%d"), "Chi", selected_row['refund'], "CK", f"Hoàn tiền khách thêm: {selected_row['customer']}")
                             st.success("Đã duyệt chuyển trạng thái!"); time.sleep(0.5); st.rerun()
                             
@@ -879,7 +884,6 @@ def main_app():
                     disp_paid.columns = ["Mã số", "Khách hàng", "Tiền trước thuế", "Thực làm", "Không làm", "Thuế suất (%)", "Thuế TNCN", "Còn chuyển lại", "Trạng thái"]
                     st.dataframe(disp_paid, use_container_width=True, hide_index=True)
                     
-        # 3. BÁO CÁO HOÀN TIỀN
         with t_report:
             st.subheader("Báo Cáo Tổng Hợp Hồ Sơ Chưa Chi")
             df_report_unpaid = df_extra[df_extra['status'] == 'Chưa chi'].copy()
@@ -894,7 +898,6 @@ def main_app():
                 disp_rep.columns = ["Tên Khách Hàng", "Số Tiền Còn Chuyển Lại"]
                 st.dataframe(disp_rep, use_container_width=True, hide_index=True)
                 
-        # 4. CHỨC NĂNG SỬA & XÓA KHÁCH THÊM
         with t_manage:
             st.subheader("Bảng Quản Lý Chỉnh Sửa & Xóa Trực Tiếp")
             if extra_data:
@@ -904,7 +907,6 @@ def main_app():
                 if st.button("💾 Lưu Thay Đổi Thao Tác"):
                     try:
                         records = edited_extra_df.to_dict('records')
-                        # Tính toán lại các trường tự động phụ thuộc phòng trường hợp người dùng chỉnh sửa tay bị sai lệch
                         for r in records:
                             r['pre_tax'] = float(r.get('pre_tax', 0))
                             r['actual'] = float(r.get('actual', 0))
@@ -1071,10 +1073,11 @@ def main_app():
 
             with t5:
                 st.subheader("Theo Dõi Hoa Hồng Nhân Viên")
+                
+                # 1. Bảng tổng hợp gốc nhóm theo nhân viên & trạng thái chi trả
                 comm_summary = df_orders.groupby(['staff', 'comm_status'])['total_comm'].sum().unstack(fill_value=0).reset_index()
                 if 'Chưa chi' not in comm_summary.columns: comm_summary['Chưa chi'] = 0.0
                 if 'Đã chi' not in comm_summary.columns: comm_summary['Đã chi'] = 0.0
-                
                 comm_summary['Tổng hoa hồng'] = comm_summary['Chưa chi'] + comm_summary['Đã chi']
                 
                 st.dataframe(
@@ -1094,6 +1097,58 @@ def main_app():
                 total_pending = df_orders[df_orders['comm_status'] != 'Đã chi']['total_comm'].sum()
                 m2.metric("Đã Thanh Toán", format_currency(total_paid))
                 m3.metric("Chưa Thanh Toán", format_currency(total_pending))
+                
+                st.divider()
+                
+                # 2. BẢNG KÊ CHI TIẾT: Đơn đã HOÀN THÀNH mà CHƯA CHI HOA HỒNG
+                st.subheader("📋 Đơn Hàng Hoàn Thành Chưa Chi Hoa Hồng")
+                
+                # Lọc điều kiện: trạng thái đơn hàng = Hoàn thành AND trạng thái hoa hồng != Đã chi
+                df_pending_details = df_orders[
+                    (df_orders['status'] == 'Hoàn thành') & 
+                    (df_orders['comm_status'] != 'Đã chi')
+                ].copy()
+                
+                if df_pending_details.empty:
+                    st.success("🎉 Không có đơn hàng nào đã hoàn thành mà chưa chi hoa hồng!")
+                else:
+                    # Tạo bảng kê chi tiết để hiển thị và xuất Excel
+                    df_export = df_pending_details[['order_id', 'cust_name', 'total_comm', 'staff']].copy()
+                    df_export.columns = ["Mã đơn hàng", "Tên khách hàng", "Số tiền hoa hồng", "Nhân viên kinh doanh"]
+                    
+                    # Tính toán tổng chưa chi theo từng nhân viên riêng cho loại đơn đã hoàn thành này
+                    st.write("**Thống kê chưa chi theo nhân viên (Chỉ tính trên đơn đã Hoàn thành):**")
+                    staff_pending_total = df_export.groupby("Nhân viên kinh doanh")["Số tiền hoa hồng"].sum().reset_index()
+                    staff_pending_total.columns = ["Nhân viên", "Tổng chưa chi (Đơn hoàn thành)"]
+                    
+                    # Format hiển thị cột tiền mặt
+                    disp_staff_total = staff_pending_total.copy()
+                    disp_staff_total["Tổng chưa chi (Đơn hoàn thành)"] = disp_staff_total["Tổng chưa chi (Đơn hoàn thành)"].apply(format_currency)
+                    st.dataframe(disp_staff_total, hide_index=True, use_container_width=True)
+                    
+                    st.write("**Bảng kê chi tiết các đơn hàng:**")
+                    disp_export = df_export.copy()
+                    disp_export["Số tiền hoa hồng"] = disp_export["Số tiền hoa hồng"].apply(format_currency)
+                    st.dataframe(disp_export, hide_index=True, use_container_width=True)
+                    
+                    # 3. XỬ LÝ XUẤT FILE EXCEL
+                    try:
+                        buffer = io.BytesIO()
+                        # Tạo file excel đa tab hoặc một sheet gom thông tin trực quan
+                        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                            df_export.to_excel(writer, sheet_name="Chi Tiết Đơn Chưa Chi", index=False)
+                            staff_pending_total.to_excel(writer, sheet_name="Tổng Hợp Theo Nhân Viên", index=False)
+                        
+                        buffer.seek(0)
+                        st.download_button(
+                            label="📥 Xuất bảng kê ra file Excel",
+                            data=buffer,
+                            file_name=f"HoaHong_ChuaChi_HoanThanh_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            type="primary"
+                        )
+                    except Exception as ex:
+                        st.error(f"Không thể tạo link tải Excel (Thiếu thư viện openpyxl?): {ex}")
 
 if __name__ == "__main__":
     if 'logged_in' not in st.session_state:
