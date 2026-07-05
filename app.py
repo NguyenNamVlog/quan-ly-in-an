@@ -205,6 +205,31 @@ def update_commission_status(order_id, status_text):
         return True
     except: return False
 
+# --- HÀM UPDATE HÀNG LOẠT HOA HỒNG ---
+def update_multiple_commissions(order_ids, status_text):
+    client = get_gspread_client()
+    if not client or not order_ids: return False
+    try:
+        sh = client.open_by_url(SHEET_URL)
+        ws = sh.worksheet("Orders")
+        
+        # Lấy toàn bộ cột ID để tìm nhanh hơn
+        id_list = ws.col_values(1)
+        
+        for oid in order_ids:
+            if oid in id_list:
+                row_idx = id_list.index(oid) + 1
+                old_fin_str = ws.cell(row_idx, 7).value
+                try: fin = json.loads(old_fin_str)
+                except: fin = {}
+                fin['commission_status'] = status_text
+                ws.update_cell(row_idx, 7, json.dumps(fin, ensure_ascii=False))
+                
+        st.cache_data.clear()
+        return True
+    except:
+        return False
+
 def delete_order(order_id):
     client = get_gspread_client()
     if not client: return False
@@ -291,8 +316,6 @@ def fetch_cashbook():
         return ws.get_all_records()
     except: return []
 
-
-# --- FIX LỖI ĐÁNH SỐ TRÙNG ORDER_ID TẠI HÀM NÀY ---
 def gen_id():
     orders = fetch_all_orders()
     year = datetime.now().strftime("%y")
@@ -300,10 +323,8 @@ def gen_id():
     
     for o in orders:
         oid = str(o.get('order_id', '')).strip()
-        # Định dạng chuẩn là "XXX/DH.YY" (Ví dụ: 116/DH.26)
         if "/DH." + year in oid:
             try:
-                # Tách lấy phần số thứ tự phía trước dấu gạch chéo
                 num_part = oid.split("/")[0]
                 num = int(num_part)
                 if num > max_num:
@@ -313,7 +334,6 @@ def gen_id():
                 
     next_num = max_num + 1
     return f"{next_num:03d}/DH.{year}"
-
 
 # --- DATABASE CHO KHÁCH THÊM ---
 def fetch_extra_customers():
@@ -906,7 +926,7 @@ def main_app():
                     st.dataframe(disp_paid, use_container_width=True, hide_index=True)
                     
         with t_report:
-            st.subheader("Báo Cáo Tổng Hợp Hồ Sơ Chưa Chi")
+            st.subheader("Báo Cáo Tổng Hơp Hồ Sơ Chưa Chi")
             df_report_unpaid = df_extra[df_extra['status'] == 'Chưa chi'].copy()
             if df_report_unpaid.empty:
                 st.success("🎉 Tuyệt vời! Không còn khách nào trong trạng thái Chưa Chi.")
@@ -1130,26 +1150,59 @@ def main_app():
                 if df_pending_details.empty:
                     st.success("🎉 Không có đơn hàng nào đã hoàn thành mà chưa chi hoa hồng!")
                 else:
-                    df_export = df_pending_details[['order_id', 'cust_name', 'total_comm', 'staff']].copy()
-                    df_export.columns = ["Mã đơn hàng", "Tên khách hàng", "Số tiền hoa hồng", "Nhân viên kinh doanh"]
+                    df_base = df_pending_details[['order_id', 'cust_name', 'total_comm', 'staff']].copy()
+                    df_base.columns = ["Mã đơn hàng", "Tên khách hàng", "Số tiền hoa hồng", "Nhân viên kinh doanh"]
                     
                     st.write("**Thống kê chưa chi theo nhân viên (Chỉ tính trên đơn đã Hoàn thành):**")
-                    staff_pending_total = df_export.groupby("Nhân viên kinh doanh")["Số tiền hoa hồng"].sum().reset_index()
+                    staff_pending_total = df_base.groupby("Nhân viên kinh doanh")["Số tiền hoa hồng"].sum().reset_index()
                     staff_pending_total.columns = ["Nhân viên", "Tổng chưa chi (Đơn hoàn thành)"]
                     
                     disp_staff_total = staff_pending_total.copy()
                     disp_staff_total["Tổng chưa chi (Đơn hoàn thành)"] = disp_staff_total["Tổng chưa chi (Đơn hoàn thành)"].apply(format_currency)
                     st.dataframe(disp_staff_total, hide_index=True, use_container_width=True)
                     
-                    st.write("**Bảng kê chi tiết các đơn hàng:**")
-                    disp_export = df_export.copy()
-                    disp_export["Số tiền hoa hồng"] = disp_export["Số tiền hoa hồng"].apply(format_currency)
-                    st.dataframe(disp_export, hide_index=True, use_container_width=True)
+                    # --- UPDATE: CHO PHÉP TÍCH CHỌN NHIỀU ĐƠN HÀNG VÀ CHI HÀNG LOẠT ---
+                    st.write("**Bảng kê chi tiết các đơn hàng (Tích chọn để chi hoa hồng):**")
                     
+                    # Sử dụng st.dataframe ở chế độ selection_mode="multi-row" để tích chọn checkbox nhiều dòng
+                    event_multi = st.dataframe(
+                        df_base, 
+                        use_container_width=True, 
+                        hide_index=True, 
+                        selection_mode="multi-row", 
+                        on_select="rerun", 
+                        key="multi_select_commission"
+                    )
+                    
+                    # Kiểm tra xem có dòng nào được chọn không
+                    selected_rows = event_multi.selection.rows
+                    
+                    if selected_rows:
+                        # Trích xuất danh sách các mã đơn hàng được chọn từ vị trí dòng
+                        selected_order_ids = [df_base.iloc[r]["Mã đơn hàng"] for r in selected_rows]
+                        selected_total_comm = sum([float(df_base.iloc[r]["Số tiền hoa hồng"]) for r in selected_rows])
+                        
+                        st.success(f"👉 Đang chọn **{len(selected_order_ids)}** đơn hàng. Tổng tiền hoa hồng: **{format_currency(selected_total_comm)}**")
+                        
+                        if is_admin:
+                            if st.button("💸 Xác nhận Chi Hoa Hồng Cho Các Đơn Đã Chọn", type="primary", use_container_width=True):
+                                with st.spinner("Đang cập nhật dữ liệu..."):
+                                    if update_multiple_commissions(selected_order_ids, "Đã chi"):
+                                        st.success(f"✅ Đã chi hoa hồng thành công cho {len(selected_order_ids)} đơn hàng!")
+                                        time.sleep(1)
+                                        st.rerun()
+                                    else:
+                                        st.error("Gặp lỗi trong quá trình cập nhật trạng thái lên hệ thống.")
+                        else:
+                            st.warning("🔒 Chỉ tài khoản Admin mới quyền thực hiện nút bấm chi hoa hồng.")
+                    else:
+                        st.info("💡 Mẹo: Bạn có thể tích chọn ô đầu dòng của bảng trên để xử lý chi hoa hồng đồng thời cho nhiều đơn hàng.")
+                    
+                    # --- XUẤT FILE EXCEL ---
                     try:
                         buffer = io.BytesIO()
                         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                            df_export.to_excel(writer, sheet_name="Chi Tiết Đơn Chưa Chi", index=False)
+                            df_base.to_excel(writer, sheet_name="Chi Tiết Đơn Chưa Chi", index=False)
                             staff_pending_total.to_excel(writer, sheet_name="Tổng Hợp Theo Nhân Viên", index=False)
                         
                         buffer.seek(0)
@@ -1157,8 +1210,7 @@ def main_app():
                             label="📥 Xuất bảng kê ra file Excel",
                             data=buffer,
                             file_name=f"HoaHong_ChuaChi_HoanThanh_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            type="primary"
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
                     except Exception as ex:
                         st.error(f"Không thể tạo file Excel: {ex}")
