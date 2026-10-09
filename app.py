@@ -642,7 +642,7 @@ def main_app():
                     profit = total_sell - total_cost
             
                     comm_rate = 0.3
-                    if staff in ["Nam", "Dương"]: comm_rate = 0.6
+                    if staff in ["Nam", "Dương"]: comm_rate = 0.5
                     elif staff == "Vạn": comm_rate = 0.5
                     commission = profit * comm_rate if profit > 0 else 0
        
@@ -842,7 +842,7 @@ def main_app():
                                     r_profit += it['profit']
                                 
                                 c_staff = fin.get('staff', '')
-                                rate = 0.6 if c_staff in ["Nam", "Dương"] else (0.5 if c_staff == "Vạn" else 0.3)
+                                rate = 0.5 if c_staff in ["Nam", "Dương"] else (0.5 if c_staff == "Vạn" else 0.3)
                                 r_comm = r_profit * rate if r_profit > 0 else 0
                                 
                                 if edit_order_info(oid, {"name": new_name, "phone": new_phone, "address": new_addr}, r_total, new_items, r_profit, r_comm):
