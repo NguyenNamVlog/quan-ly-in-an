@@ -66,8 +66,7 @@ def get_gspread_client():
         
         creds_dict = dict(st.secrets["service_account"])
         if "private_key" in creds_dict:
-            creds_dict["private_key"] = creds_dict["private_key"].replace("\n", "
-")
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
@@ -398,18 +397,19 @@ def update_extra_customers_batch(df_records):
     except: return False
 
 # --- QUẢN LÝ HỢP ĐỒNG (CONTRACTS DATABASE & AUTO-NUMBERING) ---
-def get_contract_code_prefix(contract_type):
-    if contract_type == "Hợp đồng in ấn":
-        return "HĐIA"
-    elif contract_type == "Hợp đồng in ấn và quảng cáo":
-        return "HĐQC"
-    return "HĐMB"
-
-def get_next_contract_seq(contract_type="Hợp đồng mua bán"):
+def get_next_contract_seq():
+    """
+    Tự động tăng số từ 10, reset lại từ 10 khi qua năm mới.
+    Format theo yêu cầu:
+    1. Số HĐ: [seq]/HĐMB-ALP.[YY] (Ví dụ: 10/HĐMB-ALP.26)
+    2. Số BBGN: [seq]/BBGN.ALP.[YY]
+    3. Số BBNT: [seq]/BBNT.ALP.[YY]
+    4. Số ĐNTT: [seq]/ĐNTT.ALP.[YY]
+    5. Số BBTL: [seq]/BBTL.ALP.[YY]
+    """
     client = get_gspread_client()
     curr_year = datetime.now().strftime("%y")
-    max_num = 9  # Bắt đầu từ 10 (9 + 1)
-    prefix = get_contract_code_prefix(contract_type)
+    max_num = 9  # Bắt đầu bằng 10 (9 + 1)
     
     if client:
         try:
@@ -420,7 +420,7 @@ def get_next_contract_seq(contract_type="Hợp đồng mua bán"):
                 for code in col_hd:
                     code_str = str(code).strip()
                     if f"-ALP.{curr_year}" in code_str:
-                        m = re.match(rf"^(\d+)/[A-ZĐ]+-ALP\.{curr_year}", code_str)
+                        m = re.match(r"^(\d+)/HĐMB-ALP", code_str)
                         if m:
                             val = int(m.group(1))
                             if val > max_num:
@@ -432,8 +432,7 @@ def get_next_contract_seq(contract_type="Hợp đồng mua bán"):
     return {
         "seq": next_seq,
         "year": curr_year,
-        "prefix": prefix,
-        "so_hd": f"{next_seq}/{prefix}-ALP.{curr_year}",
+        "so_hd": f"{next_seq}/HĐMB-ALP.{curr_year}",
         "so_bbgn": f"{next_seq}/BBGN.ALP.{curr_year}",
         "so_bbnt": f"{next_seq}/BBNT.ALP.{curr_year}",
         "so_dntt": f"{next_seq}/ĐNTT.ALP.{curr_year}",
@@ -448,20 +447,18 @@ def save_contract_to_sheet(contract_data):
         try:
             ws = sh.worksheet("Contracts")
         except:
-            ws = sh.add_worksheet("Contracts", 1000, 16)
+            ws = sh.add_worksheet("Contracts", 1000, 15)
             ws.append_row([
-                "so_hd", "loai_hd", "ngay_ky", "khach_hang", "mst", "noi_dung", 
-                "tong_tien", "tinh_trang", "dot1_amt", "dot2_amt", "items_json", "extra_json", "created_at"
+                "so_hd", "ngay_ky", "khach_hang", "mst", "nguoi_dd", "tong_tien", 
+                "dot1_amt", "dot2_amt", "items_json", "extra_json", "created_at"
             ])
         ws.append_row([
             contract_data['so_hd'],
-            contract_data.get('loai_hd', 'Hợp đồng mua bán'),
             contract_data['ngay_ky'],
             contract_data['khach_hang'],
             contract_data['mst'],
-            contract_data.get('noi_dung', ''),
+            contract_data['nguoi_dd'],
             float(contract_data['tong_tien']),
-            contract_data.get('tinh_trang', 'Chuẩn bị ký'),
             float(contract_data['dot1_amt']),
             float(contract_data['dot2_amt']),
             json.dumps(contract_data['items'], ensure_ascii=False),
@@ -472,23 +469,6 @@ def save_contract_to_sheet(contract_data):
         return True
     except Exception as e:
         st.error(f"Lỗi lưu hợp đồng: {e}")
-        return False
-
-def update_contract_status_sheet(so_hd, new_status):
-    client = get_gspread_client()
-    if not client: return False
-    try:
-        sh = client.open_by_url(SHEET_URL)
-        ws = sh.worksheet("Contracts")
-        cell = ws.find(so_hd)
-        if cell:
-            # Cột 8 là tinh_trang
-            ws.update_cell(cell.row, 8, new_status)
-            st.cache_data.clear()
-            return True
-        return False
-    except Exception as e:
-        st.error(f"Lỗi cập nhật trạng thái hợp đồng: {e}")
         return False
 
 def fetch_all_contracts():
@@ -506,7 +486,7 @@ def fetch_all_contracts():
         return raw
     except: return []
 
-# --- HÀM XUẤT TRỌN BỘ 5 VĂN BẢN WORD (.DOCX) ĐẦY ĐỦ 100% THEO FILE MẪU ---
+# --- HÀM XUẤT TRỌN BỘ 5 VĂN BẢN HỢP ĐỒNG WORD (.DOCX) ---
 def create_full_contract_docx(c_data):
     doc = Document()
     
@@ -545,33 +525,6 @@ def create_full_contract_docx(c_data):
     so_bbnt = c_data['so_bbnt']
     so_dntt = c_data['so_dntt']
     so_bbtl = c_data['so_bbtl']
-    loai_hd = c_data.get('loai_hd', 'Hợp đồng mua bán')
-    
-    # Điều chỉnh tiêu đề và thuật ngữ theo loại hợp đồng
-    if loai_hd == "Hợp đồng in ấn":
-        hd_title = "HỢP ĐỒNG DỊCH VỤ IN ẤN"
-        term_goods = "sản phẩm in ấn"
-        term_service = "cung ứng sản phẩm và dịch vụ in ấn"
-        party_a_title = "BÊN CUNG ỨNG DỊCH VỤ (BÊN A)"
-        party_b_title = "BÊN ĐẶT IN (BÊN B)"
-        role_a_short = "Bên A"
-        role_b_short = "Bên B"
-    elif loai_hd == "Hợp đồng in ấn và quảng cáo":
-        hd_title = "HỢP ĐỒNG THIẾT KẾ, IN ẤN VÀ QUẢNG CÁO"
-        term_goods = "ấn phẩm và hạng mục quảng cáo"
-        term_service = "thiết kế, sản xuất ấn phẩm và thi công quảng cáo"
-        party_a_title = "BÊN THỰC HIỆN DỊCH VỤ (BÊN A)"
-        party_b_title = "BÊN ĐẶT HÀNG (BÊN B)"
-        role_a_short = "Bên A"
-        role_b_short = "Bên B"
-    else:
-        hd_title = "HỢP ĐỒNG MUA BÁN HÀNG HÓA"
-        term_goods = "hàng hóa"
-        term_service = "mua bán hàng hóa"
-        party_a_title = "BÊN BÁN (BÊN A)"
-        party_b_title = "BÊN MUA (BÊN B)"
-        role_a_short = "Bên Bán"
-        role_b_short = "Bên Mua"
     
     d_day = c_data['ngay_ky_dt'].strftime("%d")
     d_month = c_data['ngay_ky_dt'].strftime("%m")
@@ -584,45 +537,38 @@ def create_full_contract_docx(c_data):
     dot1_amt = float(c_data['dot1_amt'])
     dot2_amt = float(c_data['dot2_amt'])
 
-    # ==========================
-    # 1. HỢP ĐỒNG ĐẦY ĐỦ 9 ĐIỀU
-    # ==========================
-    add_quoc_hieu(so_hd, hd_title)
+    # 1. HỢP ĐỒNG MUA BÁN HÀNG HÓA
+    add_quoc_hieu(so_hd, "HỢP ĐỒNG MUA BÁN HÀNG HÓA")
     add_p("- Căn cứ Bộ luật Dân sự số 91/2015/QH13 được Quốc hội nước CHXHCN Việt Nam thông qua ngày 24/11/2015 và các văn bản hướng dẫn thi hành;", italic=True)
     add_p("- Căn cứ Luật Thương mại số 36/2005/QH11 được Quốc hội nước CHXHCN Việt Nam thông qua ngày 14/06/2005 và các văn bản hướng dẫn thi hành;", italic=True)
-    add_p(f"- Căn cứ nhu cầu {term_service} và năng lực thực tế của hai Bên,", italic=True)
+    add_p("- Căn cứ nhu cầu mua bán hàng hóa và năng lực thực tế của hai Bên,", italic=True)
     add_p(f"Hôm nay, ngày {d_day} tháng {d_month} năm {d_year}, tại trụ sở CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT, hai Bên gồm có:", italic=True, space_after=6)
 
-    # Bên A
-    add_p(f"{party_a_title}: CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT", bold=True)
+    add_p("BÊN BÁN (BÊN A): CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT", bold=True)
     add_p("• Địa chỉ trụ sở: N1/1, Tổ 12, Khu phố 3, Phường Long Hưng, Thành phố Đồng Nai, Việt Nam")
     add_p("• Mã số thuế: 3603995632")
-    add_p("• Điện thoại: 0706 279 379                 	 • Email: anlocphat68.ltd@gmail.com")
-    add_p("• Tài khoản ngân hàng số: 868080")
-    add_p("  Tại Ngân hàng:  Ngân hàng TMCP Kỹ thương Việt Nam - THP- TCB TAM HIEP")
-    add_p("• Đại diện bởi: Ông LÊ VĂN VẠN 	• Chức vụ: Giám đốc")
+    add_p("• Điện thoại: 0706 279 379               • Email: anlocphat68.ltd@gmail.com")
+    add_p("• Tài khoản ngân hàng số: 868080 tại Ngân hàng TMCP Kỹ thương Việt Nam (Techcombank) - THP- TCB TAM HIEP")
+    add_p("• Đại diện bởi: Ông LÊ VĂN VẠN            • Chức vụ: Giám đốc")
     add_p("")
 
-    # Bên B
-    add_p(f"{party_b_title}: {cust.get('name', '').upper()}", bold=True)
+    add_p(f"BÊN MUA (BÊN B): {cust.get('name', '').upper()}", bold=True)
     add_p(f"• Địa chỉ trụ sở: {cust.get('address', '')}")
     add_p(f"• Mã số thuế: {cust.get('mst', '')}")
-    add_p(f"• Điện thoại: {cust.get('phone', '')}              • Email: {cust.get('email', '')}")
-    add_p(f"• Tài khoản ngân hàng số: {cust.get('bank_no', '')}")
-    add_p(f"  Tại Ngân hàng: {cust.get('bank_name', '')}")
-    add_p(f"• Đại diện bởi: {cust.get('rep_name', '')}              • Chức vụ: {cust.get('rep_role', 'Giám đốc')}")
+    add_p(f"• Điện thoại: {cust.get('phone', '')}               • Email: {cust.get('email', '')}")
+    add_p(f"• Tài khoản ngân hàng số: {cust.get('bank_no', '')} tại Ngân hàng: {cust.get('bank_name', '')}")
+    add_p(f"• Đại diện bởi: {cust.get('rep_name', '')}            • Chức vụ: {cust.get('rep_role', 'Giám đốc')}")
     if cust.get('auth_doc'):
-        add_p(f"• Văn bản ủy quyền (nếu có): {cust.get('auth_doc')}")
+        add_p(f"• Văn bản ủy quyền: {cust.get('auth_doc')}")
     
-    add_p(f"Sau khi bàn bạc và thống nhất trên tinh thần bình đẳng và cùng có lợi, hai Bên thỏa thuận ký kết {hd_title} với các điều khoản và điều kiện cụ thể sau đây:")
-    
-    # ĐIỀU 1
-    add_p(f"ĐIỀU 1. ĐỐI TƯỢNG {term_goods.upper()} VÀ GIÁ CẢ", bold=True)
-    add_p(f"1.1. {role_a_short} đồng ý cung cấp và {role_b_short} đồng ý mua danh mục {term_goods} với quy cách, số lượng và đơn giá chi tiết như sau:")
+    add_p("Sau khi bàn bạc và thống nhất trên tinh thần bình đẳng và cùng có lợi, hai Bên thỏa thuận ký kết Hợp đồng mua bán hàng hóa với các điều khoản và điều kiện cụ thể sau đây:")
+    add_p("ĐIỀU 1. ĐỐI TƯỢNG HÀNG HÓA VÀ GIÁ CẢ", bold=True)
+    add_p("1.1. Bên Bán đồng ý bán và Bên Mua đồng ý mua danh mục hàng hóa với quy cách, số lượng và đơn giá chi tiết như sau:")
 
+    # Bảng hàng hóa
     tbl = doc.add_table(rows=1, cols=7)
     tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-    headers = ["STT", f"Tên {term_goods} / Quy cách", "ĐVT", "Số lượng", "Đơn giá (VNĐ)", "Thuế GTGT", "Thành tiền (VNĐ)"]
+    headers = ["STT", "Tên hàng hóa / Mô tả quy cách", "ĐVT", "Số lượng", "Đơn giá (VNĐ)", "Thuế GTGT", "Thành tiền (VNĐ)"]
     hdr_cells = tbl.rows[0].cells
     for idx, h in enumerate(headers):
         hdr_cells[idx].text = h
@@ -662,109 +608,54 @@ def create_full_contract_docx(c_data):
     add_p(f"1.2. Tổng giá trị Hợp đồng bằng chữ: {c_data['sotienbangchu']}")
     add_p("1.3. Đơn giá nêu trên đã bao gồm thuế Giá trị gia tăng (GTGT), chi phí đóng gói chuẩn của nhà sản xuất. Mọi chi phí phát sinh ngoài thỏa thuận chỉ có hiệu lực khi hai Bên lập phụ lục văn bản có đóng dấu xác nhận.")
     
-    # ĐIỀU 2
     add_p("ĐIỀU 2. TIÊU CHUẨN CHẤT LƯỢNG VÀ BẢO HÀNH", bold=True)
-    add_p(f"2.1. {term_goods.capitalize()} do {role_a_short} cung cấp phải mới 100%, chưa qua sử dụng, đúng chủng loại, đúng tiêu chuẩn kỹ thuật (đúng market đã duyệt) và quy định pháp luật Việt Nam.")
-    add_p(f"2.2. Thời hạn bảo hành sản phẩm: {ext.get('warranty_months', '12')} tháng kể từ ngày hai Bên ký kết Biên bản nghiệm thu và bàn giao {term_goods} hoàn tất.")
-    add_p(f"2.3. Điều kiện bảo hành (Bảo vệ quyền lợi {role_a_short}): {role_a_short} chỉ chịu trách nhiệm bảo hành đối với các khuyết tật, hư hỏng do lỗi kỹ thuật của nhà sản xuất. {role_a_short} hoàn toàn miễn trừ trách nhiệm bảo hành trong các trường hợp: {role_b_short} bảo quản sai hướng dẫn, tự ý tháo dỡ, sửa chữa hoặc can thiệp kỹ thuật trái phép, hư hại do thiên tai, hỏa hoạn, va đập vật lý hoặc do sự cố nguồn điện bên phía {role_b_short}.")
+    add_p("2.1. Hàng hóa do Bên Bán cung cấp phải mới 100%, chưa qua sử dụng, đúng chủng loại, đúng tiêu chuẩn kỹ thuật của nhà sản xuất.")
+    add_p(f"2.2. Thời hạn bảo hành sản phẩm: {ext.get('warranty_months', '12')} tháng kể từ ngày hai Bên ký kết Biên bản nghiệm thu và bàn giao hàng hóa hoàn tất.")
+    add_p("2.3. Điều kiện bảo hành: Bên Bán chỉ chịu trách nhiệm bảo hành đối với các khuyết tật, hư hỏng do lỗi kỹ thuật của nhà sản xuất. Miễn trừ trách nhiệm bảo hành do bảo quản sai hướng dẫn, tự ý tháo dỡ hoặc can thiệp kỹ thuật trái phép.")
 
-    # ĐIỀU 3
     add_p("ĐIỀU 3. THỜI HẠN, ĐỊA ĐIỂM VÀ PHƯƠNG THỨC GIAO NHẬN", bold=True)
-    add_p(f"3.1. Thời hạn giao hàng: {role_a_short} sẽ giao hàng cho {role_b_short} trong vòng {ext.get('delivery_days', '05')} ngày làm việc kể từ ngày {role_b_short} hoàn tất nghĩa vụ thanh toán tiền tạm ứng (hoặc kể từ ngày ký kết Hợp đồng và duyệt mẫu thiết kế).")
-    add_p(f"3.2. Địa điểm giao hàng: Giao tại kho của {role_b_short} tại: {ext.get('delivery_address', cust.get('address'))}")
-    add_p(f"3.3. Chi phí bốc xếp và vận chuyển: Do {role_a_short.lower()} chịu trách nhiệm chi trả và được tính vào giá {term_goods}.")
-    add_p(f"3.4. Kiểm tra và bàn giao: Khi nhận hàng, đại diện có thẩm quyền của {role_b_short} phải kiểm tra số lượng, bao bì, ngoại quan và quy cách {term_goods} ngay tại thời điểm giao. Nếu phát hiện thiếu hụt, hư hỏng bên ngoài, {role_b_short} phải lập biên bản có chữ ký của hai Bên tại chỗ.")
-    add_p(f"3.5. Giới hạn thời gian khiếu nại: Hết thời hạn 05 (năm) ngày làm việc kể từ thời điểm ký nhận bàn giao, nếu {role_b_short} không có thông báo bằng văn bản gửi đến {role_a_short} về các khuyết tật ẩn tì, {term_goods} được coi là đã được nghiệm thu đầy đủ, nguyên vẹn và đạt chuẩn chất lượng theo đúng Hợp đồng. Mọi khiếu nại sau thời hạn này đều không có giá trị pháp lý.")
+    add_p(f"3.1. Thời hạn giao hàng: Bên Bán sẽ giao hàng cho Bên Mua trong vòng {ext.get('delivery_days', '05')} ngày làm việc kể từ ngày hoàn tất nghĩa vụ tạm ứng.")
+    add_p(f"3.2. Địa điểm giao hàng: Giao tại kho của Bên Mua tại: {ext.get('delivery_address', cust.get('address'))}")
+    add_p("3.3. Chi phí bốc xếp và vận chuyển: Do bên bán chịu trách nhiệm chi trả và được tính vào giá hàng hóa.")
 
-    # ĐIỀU 4
     add_p("ĐIỀU 4. PHƯƠNG THỨC VÀ TIẾN ĐỘ THANH TOÁN", bold=True)
-    add_p(f"4.1. Hình thức thanh toán: Chuyển khoản vào tài khoản ngân hàng của {role_a_short} quy định tại phần thông tin chủ thể.")
-    add_p(f"4.2. Tiến độ thanh toán: {role_b_short} thanh toán cho {role_a_short} làm 02 đợt:")
-    add_p(f"• Đợt 1 (Tạm ứng): {role_b_short} thanh toán {ext.get('adv_pct', 50)}% tổng giá trị Hợp đồng, tương đương số tiền: {format_currency(dot1_amt)} VNĐ trong vòng 03 ngày làm việc kể từ ngày ký Hợp đồng.")
-    add_p(f"• Đợt 2 (Thanh toán dứt điểm): {role_b_short} thanh toán toàn bộ {100 - int(ext.get('adv_pct', 50))}% giá trị còn lại của Hợp đồng, tương đương số tiền: {format_currency(dot2_amt)} VNĐ ngay trước khi nhận hàng hoặc trong vòng 05 ngày làm việc kể từ ngày ký Biên bản bàn giao {term_goods}.")
-    add_p(f"4.3. Quyền giữ hàng và dừng bàn giao (Chặt chẽ cho {role_a_short}): Trường hợp {role_b_short} chưa hoàn thành nghĩa vụ thanh toán của bất kỳ đợt nào đến hạn, {role_a_short} có toàn quyền tạm ngưng sản xuất, tạm giữ hàng hoặc từ chối bàn giao mà không bị coi là vi phạm tiến độ bàn giao {term_goods}.")
+    add_p("4.1. Hình thức thanh toán: Chuyển khoản vào tài khoản ngân hàng của Bên Bán.")
+    add_p(f"4.2. Tiến độ thanh toán: Bên Mua thanh toán cho Bên Bán làm 02 đợt:")
+    add_p(f"• Đợt 1 (Tạm ứng): Bên Mua thanh toán {ext.get('adv_pct', 50)}% tổng giá trị Hợp đồng, tương đương: {format_currency(dot1_amt)} VNĐ trong vòng 03 ngày làm việc kể từ ngày ký Hợp đồng.")
+    add_p(f"• Đợt 2 (Dứt điểm): Bên Mua thanh toán toàn bộ {100 - int(ext.get('adv_pct', 50))}% giá trị còn lại, tương đương: {format_currency(dot2_amt)} VNĐ trước khi nhận hàng hoặc trong 05 ngày làm việc kể từ ngày nghiệm thu.")
 
-    # ĐIỀU 5
-    add_p("ĐIỀU 5. BẢO LƯU QUYỀN SỞ HỮU VÀ CHUYỂN DỊCH RỦI RO", bold=True)
-    add_p(f"5.1. Bảo lưu quyền sở hữu (Điều 332 Bộ luật Dân sự 2015): Toàn bộ {term_goods} thuộc Hợp đồng này vẫn thuộc quyền sở hữu hợp pháp của {role_a_short} cho đến khi {role_b_short} thanh toán đầy đủ 100% giá trị Hợp đồng cùng các chi phí phát sinh (nếu có). Trong thời gian này, {role_b_short} không được bán, chuyển nhượng, thế chấp, cầm cố hoặc định đoạt tài sản dưới bất kỳ hình thức nào khi chưa có sự đồng ý bằng văn bản của {role_a_short}.")
-    add_p(f"5.2. Chuyển giao rủi ro: Rủi ro về mất mát hoặc hư hỏng đối với {term_goods} được chuyển giao sang cho {role_b_short} kể từ thời điểm {term_goods} được bàn giao và đại diện {role_b_short} ký nhận vào Biên bản bàn giao {term_goods}.")
-
-    # ĐIỀU 6
-    add_p("ĐIỀU 6. PHẠT VI PHẠM VÀ BỒI THƯỜNG THIỆT HẠI", bold=True)
-    add_p(f"6.1. Phạt chậm thanh toán (Bảo vệ {role_a_short}): Nếu {role_b_short} chậm thanh toán so với thời hạn thỏa thuận tại Điều 4, {role_b_short} phải chịu khoản lãi phạt chậm trả tính trên số tiền chậm thanh toán với mức lãi suất bằng 0,05% / ngày hoặc 150% lãi suất cơ bản do NHNN công bố cho từng ngày chậm thanh toán.")
-    add_p(f"6.2. Nếu {role_b_short} chậm thanh toán quá 15 (mười lăm) ngày làm việc, {role_a_short} có quyền đơn phương chấm dứt Hợp đồng, thu hồi toàn bộ số {term_goods} đã giao ({role_b_short} chịu mọi phí tổn phát sinh), đồng thời phạt vi phạm 8% (tám phần trăm) giá trị phần Hợp đồng bị vi phạm và yêu cầu bồi thường toàn bộ thiệt hại thực tế phát sinh.")
-    add_p(f"6.3. Trường hợp {role_a_short} chậm giao hàng do nguyên nhân chủ quan của {role_a_short}, {role_a_short} sẽ chịu mức phạt vi phạm là 0,05% / ngày trên giá trị số hàng giao chậm, nhưng tổng số tiền phạt không vượt quá 8% giá trị phần nghĩa vụ bị vi phạm theo Điều 301 Luật Thương mại.")
-
-    # ĐIỀU 7
-    add_p("ĐIỀU 7. SỰ KIỆN BẤT KHẢ KHÁNG", bold=True)
-    add_p(f"7.1. Sự kiện bất khả kháng là những sự kiện xảy ra một cách khách quan, không thể lường trước được và không thể khắc phục được mặc dù đã áp dụng mọi biện pháp cần thiết (bao gồm thiên tai, dịch bệnh, chiến tranh, đình công, thay đổi chính sách pháp luật của Nhà nước làm gián đoạn việc cung ứng {term_goods}).")
-    add_p("7.2. Bên gặp sự kiện bất khả kháng được miễn trách nhiệm đối với nghĩa vụ chậm thực hiện, với điều kiện phải thông báo bằng văn bản cho Bên kia trong vòng 03 (ba) ngày làm việc kể từ ngày sự kiện xảy ra và cung cấp chứng nhận hợp lệ của cơ quan có thẩm quyền.")
-
-    # ĐIỀU 8
-    add_p("ĐIỀU 8. LUẬT ÁP DỤNG VÀ GIẢI QUYẾT TRANH CHẤP", bold=True)
-    add_p("8.1. Hợp đồng này được điều chỉnh và giải thích theo các quy định của pháp luật nước Cộng hòa Xã hội Chủ nghĩa Việt Nam.")
-    add_p(f"8.2. Mọi tranh chấp phát sinh từ hoặc liên quan đến Hợp đồng này trước hết sẽ được giải quyết thông qua thương lượng hòa giải giữa hai Bên. Nếu sau 30 (ba mươi) ngày kể từ ngày phát sinh tranh chấp mà thương lượng không thành, tranh chấp sẽ được đưa ra giải quyết tại Tòa án nhân dân có thẩm quyền tại thành phố Đồng Nai để bảo đảm tối đa quyền lợi tố tụng hợp pháp cho {role_a_short}. Toàn bộ án phí và chi phí pháp lý phát sinh do Bên thua kiện gánh chịu.")
-
-    # ĐIỀU 9
-    add_p("ĐIỀU 9. ĐIỀU KHOẢN CHUNG VÀ HIỆU LỰC HỢP ĐỒNG", bold=True)
-    add_p("9.1. Hợp đồng này có hiệu lực kể từ ngày đại diện hợp pháp của hai Bên ký tên và đóng dấu pháp lý.")
-    add_p("9.2. Mọi sửa đổi, bổ sung đối với Hợp đồng này chỉ có giá trị khi được lập thành Phụ lục văn bản và được người đại diện có thẩm quyền của hai Bên ký duyệt.")
-    add_p("9.3. Hai Bên cam kết thông tin cung cấp tại Hợp đồng là hoàn toàn trung thực và người ký tên có đầy đủ thẩm quyền đại diện theo quy định của pháp luật và Điều lệ Công ty.")
-    add_p("9.4. Hợp đồng này gồm có 04 trang, được lập thành 04 bản có giá trị pháp lý như nhau, mỗi Bên giữ 02 bản để thực hiện.")
+    add_p("ĐIỀU 5. ĐIỀU KHOẢN CHUNG VÀ HIỆU LỰC HỢP ĐỒNG", bold=True)
+    add_p("Hợp đồng này có hiệu lực kể từ ngày ký, gồm có 04 trang, lập thành 04 bản có giá trị pháp lý như nhau, mỗi Bên giữ 02 bản để thực hiện.")
     add_p("")
 
     sig_tab = doc.add_table(rows=1, cols=2)
     sig_tab.alignment = WD_TABLE_ALIGNMENT.CENTER
     c1, c2 = sig_tab.rows[0].cells
-    c1.text = f"ĐẠI DIỆN {party_a_title}
-(Ký tên, ghi rõ họ tên và đóng dấu)
-
-
-
-
-LÊ VĂN VẠN"
-    c2.text = f"ĐẠI DIỆN {party_b_title}
-(Ký tên, ghi rõ họ tên và đóng dấu)
-
-
-
-
-{cust.get('rep_name', '')}"
+    c1.text = "ĐẠI DIỆN BÊN BÁN (BÊN A)\n(Ký tên, đóng dấu)\n\n\n\n\nLÊ VĂN VẠN"
+    c2.text = f"ĐẠI DIỆN BÊN MUA (BÊN B)\n(Ký tên, đóng dấu)\n\n\n\n\n{cust.get('rep_name', '')}"
     c1.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
     c2.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
     set_run_font(c1.paragraphs[0].runs[0], bold=True)
     set_run_font(c2.paragraphs[0].runs[0], bold=True)
 
-    # ==========================
-    # 2. BIÊN BẢN GIAO NHẬN
-    # ==========================
+    # 2. BIÊN BẢN GIAO NHẬN HÀNG HÓA
     doc.add_page_break()
-    add_quoc_hieu(so_bbgn, f"BIÊN BẢN GIAO NHẬN {term_goods.upper()}")
-    add_p(f"(Kèm theo {hd_title} số: {so_hd})", align=WD_ALIGN_PARAGRAPH.CENTER, italic=True)
-    add_p(f"Hôm nay, vào lúc, ngày {d_day} tháng {d_month} năm {d_year}, tại địa điểm: {ext.get('delivery_address', cust.get('address'))}. Chúng tôi gồm có:", italic=True)
-    
-    add_p(f"I. {party_a_title}: CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT", bold=True)
-    add_p("• Địa chỉ trụ sở: N1/1, Tổ 12, Khu phố 3, Phường Long Hưng, Thành phố Đồng Nai, Việt Nam")
-    add_p("• Mã số thuế: 3603995632")
-    add_p("• Điện thoại: 0706 279 379                 	 • Email: anlocphat68.ltd@gmail.com")
-    add_p("• Tài khoản ngân hàng số: 868080")
-    add_p("  Tại Ngân hàng:  Ngân hàng TMCP Kỹ thương Việt Nam - THP- TCB TAM HIEP")
-    add_p("• Đại diện bởi: Ông LÊ VĂN VẠN 	• Chức vụ: Giám đốc")
-    
-    add_p(f"II. BÊN NHẬN HÀNG ({party_b_title}): {cust.get('name', '').upper()}", bold=True)
-    add_p(f"• Đại diện bởi: {ext.get('receiver_name', cust.get('rep_name'))}           • Chức vụ: {ext.get('receiver_role', 'Đại diện')}")
-    add_p(f"• Số điện thoại liên hệ: {ext.get('receiver_phone', cust.get('phone'))}              • Số CCCD/Hộ chiếu: {ext.get('receiver_id', '........................')}")
-    add_p(f"Hai Bên cùng tiến hành bàn giao và tiếp nhận {term_goods} theo các nội dung chi tiết dưới đây:")
+    add_quoc_hieu(so_bbgn, "BIÊN BẢN GIAO NHẬN HÀNG HÓA")
+    add_p(f"(Kèm theo Hợp đồng mua bán số: {so_hd})", align=WD_ALIGN_PARAGRAPH.CENTER, italic=True)
+    add_p(f"Hôm nay, ngày {d_day} tháng {d_month} năm {d_year}, tại: {ext.get('delivery_address', cust.get('address'))}. Chúng tôi gồm có:", italic=True)
+    add_p("I. BÊN BÁN (BÊN A): CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT", bold=True)
+    add_p("• Đại diện: Ông LÊ VĂN VẠN - Chức vụ: Giám đốc")
+    add_p(f"II. BÊN NHẬN HÀNG (BÊN MUA - BÊN B): {cust.get('name', '').upper()}", bold=True)
+    add_p(f"• Đại diện nhận: {ext.get('receiver_name', cust.get('rep_name'))} - Chức vụ: {ext.get('receiver_role', 'Đại diện')} - SĐT: {ext.get('receiver_phone', cust.get('phone'))}")
+    add_p("Hai Bên cùng tiến hành bàn giao và tiếp nhận hàng hóa theo các nội dung chi tiết dưới đây:")
 
     t_gn = doc.add_table(rows=1, cols=5)
     t_gn.alignment = WD_TABLE_ALIGNMENT.CENTER
-    for idx, h in enumerate(["STT", f"Tên {term_goods} / Quy cách", "ĐVT", "Số lượng theo HĐ", "Số lượng thực giao"]):
+    for idx, h in enumerate(["STT", "Tên hàng hóa / Quy cách", "ĐVT", "SL theo HĐ", "SL thực giao"]):
         t_gn.rows[0].cells[idx].text = h
         p = t_gn.rows[0].cells[idx].paragraphs[0]
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         set_run_font(p.runs[0], size=10, bold=True)
-        t_gn.rows[0].cells[idx]._tc.get_or_add_tcPr().append(parse_xml(r'<w:shd {} w:fill="EDEDED"/>'.format(nsdecls('w'))))
-
     for idx, it in enumerate(items):
         r = t_gn.add_row().cells
         r[0].text = str(idx + 1)
@@ -779,127 +670,45 @@ LÊ VĂN VẠN"
         for c in r: set_run_font(c.paragraphs[0].runs[0], size=10)
 
     add_p("")
-    add_p(f"III. HỒ SƠ, TÀI LIỆU KÈM THEO {term_goods.upper()}:", bold=True)
-    add_p("• Hóa đơn tài chính GTGT (hoặc Phiếu xuất kho kiêm vận chuyển nội bộ): Đầy đủ theo quy định.")
-    add_p("• Mẫu market đã duyệt / Chứng nhận tiêu chuẩn chất lượng (nếu có).")
-    add_p("• Phiếu bảo hành / Tài liệu hướng dẫn bàn giao.")
-    
-    add_p("IV. Ý KIẾN VÀ KẾT LUẬN CỦA HAI BÊN:", bold=True)
-    add_p(f"1. {role_b_short} đã kiểm tra số lượng và ngoại quan {term_goods} thực tế đối chiếu với chứng từ giao nhận, xác nhận {role_a_short} đã giao đúng, đủ số lượng và {term_goods} nguyên vẹn theo đúng bảng kê trên.")
-    add_p(f"2. Kể từ thời điểm ký biên bản này, rủi ro mất mát hoặc hư hỏng đối với {term_goods} được chuyển giao sang cho {role_b_short}. Biên bản này là căn cứ chứng minh {role_a_short} đã hoàn thành nghĩa vụ giao hàng.")
-    add_p("3. Biên bản giao nhận được lập thành 02 bản có giá trị pháp lý tương đương, mỗi Bên giữ 01 bản để làm căn cứ hạch toán và nghiệm thu.")
-    add_p("")
-
+    add_p("Xác nhận: Bên Mua đã kiểm tra số lượng và ngoại quan hàng hóa thực tế đối chiếu với chứng từ giao nhận, xác nhận Bên Bán đã giao đúng, đủ số lượng và hàng hóa nguyên vẹn.")
     sig_gn = doc.add_table(rows=1, cols=2)
-    sig_gn.alignment = WD_TABLE_ALIGNMENT.CENTER
-    sig_gn.rows[0].cells[0].text = f"ĐẠI DIỆN BÊN GIAO HÀNG ({role_a_short.upper()})
-(Ký và ghi rõ họ tên)
-
-
-
-
-LÊ VĂN VẠN"
-    sig_gn.rows[0].cells[1].text = f"ĐẠI DIỆN BÊN NHẬN HÀNG ({role_b_short.upper()})
-(Ký và ghi rõ họ tên)
-
-
-
-
-{ext.get('receiver_name', cust.get('rep_name'))}"
+    sig_gn.rows[0].cells[0].text = "ĐẠI DIỆN BÊN GIAO HÀNG\n\n\n\n\nLÊ VĂN VẠN"
+    sig_gn.rows[0].cells[1].text = f"ĐẠI DIỆN BÊN NHẬN HÀNG\n\n\n\n\n{ext.get('receiver_name', cust.get('rep_name'))}"
     sig_gn.rows[0].cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
     sig_gn.rows[0].cells[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-    set_run_font(sig_gn.rows[0].cells[0].paragraphs[0].runs[0], bold=True)
-    set_run_font(sig_gn.rows[0].cells[1].paragraphs[0].runs[0], bold=True)
 
-    # ==========================
-    # 3. BIÊN BẢN NGHIỆM THU
-    # ==========================
+    # 3. BIÊN BẢN NGHIỆM THU HÀNG HÓA
     doc.add_page_break()
-    add_quoc_hieu(so_bbnt, f"BIÊN BẢN NGHIỆM THU {term_goods.upper()}")
-    add_p(f"(Căn cứ theo {hd_title} số: {so_hd})", align=WD_ALIGN_PARAGRAPH.CENTER, italic=True)
-    add_p(f"Hôm nay, ngày {d_day} tháng {d_month} năm {d_year}, tại: {ext.get('delivery_address', cust.get('address'))}, hai Bên gồm có:", italic=True)
+    add_quoc_hieu(so_bbnt, "BIÊN BẢN NGHIỆM THU HÀNG HÓA")
+    add_p(f"(Căn cứ theo Hợp đồng mua bán số: {so_hd})", align=WD_ALIGN_PARAGRAPH.CENTER, italic=True)
+    add_p(f"Hôm nay, ngày {d_day} tháng {d_month} năm {d_year}, hai bên tiến hành kiểm tra nghiệm thu:", italic=True)
+    add_p("BÊN BÁN (BÊN A): CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT (Đại diện: Ông LÊ VĂN VẠN)", bold=True)
+    add_p(f"BÊN MUA (BÊN B): {cust.get('name', '')} (Đại diện: {cust.get('rep_name', '')})", bold=True)
     
-    add_p(f"{party_a_title}: CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT", bold=True)
-    add_p("• Địa chỉ trụ sở: N1/1, Tổ 12, Khu phố 3, Phường Long Hưng, Thành phố Đồng Nai, Việt Nam")
-    add_p("• Mã số thuế: 3603995632")
-    add_p("• Điện thoại: 0706 279 379                 	 • Email: anlocphat68.ltd@gmail.com")
-    add_p("• Tài khoản ngân hàng số: 868080 tại Techcombank - THP- TCB TAM HIEP")
-    add_p("• Đại diện bởi: Ông LÊ VĂN VẠN 	• Chức vụ: Giám đốc")
-    
-    add_p(f"{party_b_title}: {cust.get('name', '').upper()}", bold=True)
-    add_p(f"• Đại diện bởi: {cust.get('rep_name', '')}           • Chức vụ: {cust.get('rep_role', 'Giám đốc')}")
-    add_p(f"Hai Bên đã cùng nhau tiến hành kiểm tra và nghiệm thu {term_goods} với các nội dung sau:")
-
-    t_nt = doc.add_table(rows=1, cols=5)
-    t_nt.alignment = WD_TABLE_ALIGNMENT.CENTER
-    for idx, h in enumerate(["STT", f"Danh mục {term_goods}", "ĐVT", "Số lượng", "Đánh giá kết quả"]):
-        t_nt.rows[0].cells[idx].text = h
-        p = t_nt.rows[0].cells[idx].paragraphs[0]
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        set_run_font(p.runs[0], size=10, bold=True)
-        t_nt.rows[0].cells[idx]._tc.get_or_add_tcPr().append(parse_xml(r'<w:shd {} w:fill="EDEDED"/>'.format(nsdecls('w'))))
-
-    for idx, it in enumerate(items):
-        r = t_nt.add_row().cells
-        r[0].text = str(idx + 1)
-        r[1].text = str(it.get('name', ''))
-        r[2].text = str(it.get('unit', ''))
-        r[3].text = format_currency(it.get('qty', 0))
-        r[4].text = "ĐẠT YÊU CẦU"
-        r[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r[2].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-        r[3].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        r[4].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-        for c in r: set_run_font(c.paragraphs[0].runs[0], size=10)
-
-    add_p("")
     add_p("KẾT LUẬN CỦA HỘI ĐỒNG NGHIỆM THU:", bold=True)
-    add_p(f"1. Về số lượng & quy cách: {term_goods.capitalize()} được cung cấp đủ số lượng, đồng bộ phụ kiện, đúng chủng loại và xuất xứ thỏa thuận trong Hợp đồng.")
-    add_p("2. Về chất lượng & vận hành: Hoạt động ổn định, đạt đầy đủ các thông số kỹ thuật tiêu chuẩn, đúng maket đã duyệt, không có lỗi hay hư hỏng phát sinh.")
-    add_p(f"3. Ý kiến thống nhất: {role_b_short} chính thức chấp thuận nghiệm thu toàn bộ lô hàng nêu trên.")
-    add_p(f"4. Thời điểm kích hoạt bảo hành: Thời hạn bảo hành {ext.get('warranty_months', '12')} tháng chính thức được tính kể từ ngày ký Biên bản nghiệm thu này.")
-    add_p(f"5. Biên bản này là cơ sở pháp lý để {role_a_short} lập Giấy đề nghị thanh toán và {role_b_short} hoàn tất nghĩa vụ thanh toán dứt điểm đợt cuối theo Hợp đồng.")
-    add_p("")
-
+    add_p("1. Về số lượng & quy cách: Hàng hóa được cung cấp đủ số lượng, đúng chủng loại thỏa thuận.")
+    add_p("2. Về chất lượng & vận hành: Đạt đầy đủ các thông số kỹ thuật tiêu chuẩn, không có lỗi hư hỏng.")
+    add_p(f"3. Thời điểm kích hoạt bảo hành: {ext.get('warranty_months', '12')} tháng chính thức được tính kể từ ngày ký Biên bản này.")
+    
     sig_nt = doc.add_table(rows=1, cols=2)
-    sig_nt.alignment = WD_TABLE_ALIGNMENT.CENTER
-    sig_nt.rows[0].cells[0].text = f"ĐẠI DIỆN KỸ THUẬT {role_a_short.upper()}
-(Ký, đóng dấu và ghi rõ họ tên)
-
-
-
-
-LÊ VĂN VẠN"
-    sig_nt.rows[0].cells[1].text = f"ĐẠI DIỆN NGHIỆM THU {role_b_short.upper()}
-(Ký, đóng dấu và ghi rõ họ tên)
-
-
-
-
-{cust.get('rep_name', '')}"
+    sig_nt.rows[0].cells[0].text = "ĐẠI DIỆN KỸ THUẬT BÊN BÁN\n\n\n\n\nLÊ VĂN VẠN"
+    sig_nt.rows[0].cells[1].text = f"ĐẠI DIỆN NGHIỆM THU BÊN MUA\n\n\n\n\n{cust.get('rep_name', '')}"
     sig_nt.rows[0].cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
     sig_nt.rows[0].cells[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-    set_run_font(sig_nt.rows[0].cells[0].paragraphs[0].runs[0], bold=True)
-    set_run_font(sig_nt.rows[0].cells[1].paragraphs[0].runs[0], bold=True)
 
-    # ==========================
     # 4. GIẤY ĐỀ NGHỊ THANH TOÁN
-    # ==========================
     doc.add_page_break()
     add_quoc_hieu(so_dntt, "GIẤY ĐỀ NGHỊ THANH TOÁN")
-    add_p("Kính gửi: BAN GIÁM ĐỐC", bold=True)
-    add_p(f"Đơn vị: {cust.get('name', '').upper()}", bold=True)
+    add_p(f"Kính gửi: BAN GIÁM ĐỐC - {cust.get('name', '').upper()}", bold=True)
     add_p(f"Địa chỉ: {cust.get('address', '')}")
-    add_p(f"- Căn cứ {hd_title} số: {so_hd} giữa hai bên;")
-    add_p(f"- Căn cứ Biên bản giao nhận số: {so_bbgn} và Biên bản nghiệm thu số: {so_bbnt};")
-    add_p("- Căn cứ tiến độ thực hiện và thỏa thuận thanh toán giữa hai Bên,")
-    add_p(f"Công ty An Lộc Phát trân trọng đề nghị Quý Công ty thanh toán khoản tiền {term_service} với chi tiết cụ thể như sau:")
+    add_p(f"- Căn cứ Hợp đồng mua bán hàng hóa số: {so_hd} giữa hai bên;")
+    add_p(f"- Căn cứ Biên bản giao nhận hàng hóa số: {so_bbgn} và Biên bản nghiệm thu số: {so_bbnt};")
+    add_p("Công ty An Lộc Phát trân trọng đề nghị Quý Công ty thanh toán khoản tiền mua hàng như sau:")
     
     t_tt = doc.add_table(rows=4, cols=2)
-    t_tt.alignment = WD_TABLE_ALIGNMENT.CENTER
     t_tt.rows[0].cells[0].text = "1. Tổng giá trị Hợp đồng (bao gồm VAT):"
     t_tt.rows[0].cells[1].text = f"{format_currency(grand_total)} VNĐ"
-    t_tt.rows[1].cells[0].text = f"2. Số tiền {role_b_short} đã thanh toán tạm ứng (Đợt 1):"
+    t_tt.rows[1].cells[0].text = "2. Số tiền Bên Mua đã thanh toán tạm ứng (Đợt 1):"
     t_tt.rows[1].cells[1].text = f"{format_currency(dot1_amt)} VNĐ"
     t_tt.rows[2].cells[0].text = "3. Số tiền đề nghị thanh toán đợt này (Đợt 2 / Quyết toán):"
     t_tt.rows[2].cells[1].text = f"{format_currency(dot2_amt)} VNĐ"
@@ -908,82 +717,38 @@ LÊ VĂN VẠN"
     for r in t_tt.rows: set_run_font(r.cells[0].paragraphs[0].runs[0], bold=True)
 
     add_p("")
-    add_p(f"THÔNG TIN TÀI KHOẢN THỤ HƯỞNG CỦA {role_a_short.upper()}:", bold=True)
+    add_p("THÔNG TIN TÀI KHOẢN THỤ HƯỞNG CỦA BÊN BÁN:", bold=True)
     add_p("• Tên đơn vị thụ hưởng: CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT")
     add_p("• Số tài khoản: 868080")
-    add_p("• Mở tại Ngân hàng: Ngân hàng TMCP Kỹ thương Việt Nam - THP- TCB TAM HIEP")
+    add_p("• Mở tại Ngân hàng: Ngân hàng TMCP Kỹ thương Việt Nam (Techcombank) - THP- TCB TAM HIEP")
     add_p(f"• Nội dung chuyển khoản: Thanh toán tiền hàng theo HĐ số {so_hd}")
-    add_p("")
     
     sig_tt = doc.add_table(rows=1, cols=2)
-    sig_tt.alignment = WD_TABLE_ALIGNMENT.CENTER
-    sig_tt.rows[0].cells[1].text = "GIÁM ĐỐC
-(Ký tên, đóng dấu)
-
-
-
-
-LÊ VĂN VẠN"
+    sig_tt.rows[0].cells[1].text = "GIÁM ĐỐC\n(Ký tên, đóng dấu)\n\n\n\n\nLÊ VĂN VẠN"
     sig_tt.rows[0].cells[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-    set_run_font(sig_tt.rows[0].cells[1].paragraphs[0].runs[0], bold=True)
 
-    # ==========================
-    # 5. BIÊN BẢN THANH LÝ
-    # ==========================
+    # 5. BIÊN BẢN THANH LÝ HỢP ĐỒNG
     doc.add_page_break()
-    add_quoc_hieu(so_bbtl, f"BIÊN BẢN THANH LÝ {hd_title.upper()}")
-    add_p(f"(Căn cứ {hd_title} số: {so_hd}, ký ngày {d_day}/{d_month}/{d_year})", align=WD_ALIGN_PARAGRAPH.CENTER, italic=True)
-    add_p(f"Hôm nay, ngày {d_day} tháng {d_month} năm {d_year}, tại trụ sở CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT, hai Bên gồm có:", italic=True)
-    
-    add_p(f"{party_a_title}: CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT", bold=True)
-    add_p("• Địa chỉ trụ sở: N1/1, Tổ 12, Khu phố 3, Phường Long Hưng, Thành phố Đồng Nai, Việt Nam")
-    add_p("• Mã số thuế: 3603995632")
-    add_p("• Điện thoại: 0706 279 379                 	 • Email: anlocphat68.ltd@gmail.com")
-    add_p("• Tài khoản ngân hàng số: 868080 tại Techcombank - THP- TCB TAM HIEP")
-    add_p("• Đại diện bởi: Ông LÊ VĂN VẠN 	• Chức vụ: Giám đốc")
-    
-    add_p(f"{party_b_title}: {cust.get('name', '').upper()}", bold=True)
-    add_p(f"• Địa chỉ: {cust.get('address', '')}              • Mã số thuế: {cust.get('mst', '')}")
-    add_p(f"• Đại diện bởi: {cust.get('rep_name', '')}              • Chức vụ: {cust.get('rep_role', 'Giám đốc')}")
-    add_p("Hai Bên cùng thống nhất lập và ký kết Biên bản thanh lý Hợp đồng với các điều khoản sau:")
-    
-    add_p(f"ĐIỀU 1. ĐÁNH GIÁ NGHĨA VỤ GIAO NHẬN {term_goods.upper()}", bold=True)
-    add_p(f"1. {role_a_short} đã hoàn thành việc giao toàn bộ {term_goods} đúng số lượng, chủng loại, xuất xứ và quy cách kỹ thuật theo thỏa thuận tại Hợp đồng và Biên bản nghiệm thu số {so_bbnt} ngày {d_day}/{d_month}/{d_year}.")
-    add_p(f"2. {role_b_short} xác nhận đã tiếp nhận đầy đủ {term_goods}, hồ sơ chứng từ, hóa đơn VAT hợp lệ và không có bất kỳ khiếu nại hay tranh chấp nào liên quan đến chất lượng và số lượng {term_goods}.")
-    
+    add_quoc_hieu(so_bbtl, "BIÊN BẢN THANH LÝ HỢP ĐỒNG MUA BÁN")
+    add_p(f"(Căn cứ Hợp đồng mua bán hàng hóa số: {so_hd}, ký ngày {d_day}/{d_month}/{d_year})", align=WD_ALIGN_PARAGRAPH.CENTER, italic=True)
+    add_p(f"Hôm nay, ngày {d_day} tháng {d_month} năm {d_year}, hai Bên gồm có:", italic=True)
+    add_p("BÊN BÁN (BÊN A): CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT", bold=True)
+    add_p(f"BÊN MUA (BÊN B): {cust.get('name', '').upper()}", bold=True)
+    add_p("Hai Bên cùng thống nhất nghiệm thu thanh lý Hợp đồng:")
+    add_p("ĐIỀU 1. ĐÁNH GIÁ NGHĨA VỤ GIAO NHẬN HÀNG HÓA", bold=True)
+    add_p("Bên Bán đã hoàn thành việc giao toàn bộ hàng hóa đúng số lượng, chất lượng theo thỏa thuận.")
     add_p("ĐIỀU 2. ĐỐI SOÁT VÀ QUYẾT TOÁN TÀI CHÍNH", bold=True)
     add_p(f"• Tổng giá trị Hợp đồng thanh toán (đã có VAT): {format_currency(grand_total)} VNĐ.")
-    add_p(f"• Số tiền {role_b_short} đã thanh toán cho {role_a_short}: {format_currency(grand_total)} VNĐ.")
-    add_p(f"• Số tiền còn lại {role_b_short} phải thanh toán: 0 (Không) đồng.")
-    add_p("Hai Bên xác nhận nghĩa vụ tài chính theo Hợp đồng đã được tất toán trọn vẹn, không bên nào còn nợ tiền bên nào.")
+    add_p(f"• Số tiền Bên Mua đã thanh toán cho Bên Bán: {format_currency(grand_total)} VNĐ.")
+    add_p("• Số tiền còn lại Bên Mua phải thanh toán: 0 (Không) đồng. Hai Bên hoàn tất nghĩa vụ tài chính.")
+    add_p("ĐIỀU 3. DUY TRÌ NGHĨA VỤ BẢO HÀNH", bold=True)
+    add_p("Trách nhiệm bảo hành kỹ thuật của Bên Bán vẫn tiếp tục có hiệu lực cho đến hết ngày hết hạn bảo hành.")
     
-    add_p("ĐIỀU 3. DUY TRÌ NGHĨA VỤ BẢO HÀNH (BẢO VỆ HAI BÊN)", bold=True)
-    add_p(f"Việc ký kết Biên bản thanh lý này đồng nghĩa với việc chấm dứt toàn bộ các quyền và nghĩa vụ thương mại chung của Hợp đồng, ngoại trừ trách nhiệm bảo hành kỹ thuật của {role_a_short} theo Điều 2 của Hợp đồng vẫn tiếp tục có hiệu lực cho đến hết ngày hết hạn bảo hành.")
-    
-    add_p("ĐIỀU 4. HIỆU LỰC THI HÀNH", bold=True)
-    add_p(f"Biên bản thanh lý này có hiệu lực kể từ ngày ký. Kể từ thời điểm này, Hợp đồng số {so_hd} chính thức hết hiệu lực pháp lý (trừ nghĩa vụ bảo hành). Biên bản được lập thành 04 bản có giá trị pháp lý như nhau, mỗi Bên giữ 02 bản.")
-    add_p("")
-
     sig_tl = doc.add_table(rows=1, cols=2)
-    sig_tl.alignment = WD_TABLE_ALIGNMENT.CENTER
-    sig_tl.rows[0].cells[0].text = f"ĐẠI DIỆN {party_a_title}
-(Ký tên, đóng dấu và ghi rõ họ tên)
-
-
-
-
-LÊ VĂN VẠN"
-    sig_tl.rows[0].cells[1].text = f"ĐẠI DIỆN {party_b_title}
-(Ký tên, đóng dấu và ghi rõ họ tên)
-
-
-
-
-{cust.get('rep_name', '')}"
+    sig_tl.rows[0].cells[0].text = "ĐẠI DIỆN BÊN BÁN (BÊN A)\n\n\n\n\nLÊ VĂN VẠN"
+    sig_tl.rows[0].cells[1].text = f"ĐẠI DIỆN BÊN MUA (BÊN B)\n\n\n\n\n{cust.get('rep_name', '')}"
     sig_tl.rows[0].cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
     sig_tl.rows[0].cells[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
-    set_run_font(sig_tl.rows[0].cells[0].paragraphs[0].runs[0], bold=True)
-    set_run_font(sig_tl.rows[0].cells[1].paragraphs[0].runs[0], bold=True)
 
     bio = io.BytesIO()
     doc.save(bio)
@@ -1145,8 +910,7 @@ def create_pdf(order, title):
         pdf.cell(0, 5, txt("- Báo giá này áp dụng trong vòng 30 ngày."), 0, 1)
         pdf.ln(2)
         pdf.set_x(10)
-        pdf.multi_cell(190, 5, txt("Rất mong nhận được sự hợp tác của Quý khách hàng!
-Trân trọng! "))
+        pdf.multi_cell(190, 5, txt("Rất mong nhận được sự hợp tác của Quý khách hàng!\nTrân trọng! "))
     return bytes(pdf.output())
 
 # --- LOGIN PAGE ---
@@ -1466,21 +1230,12 @@ def main_app():
     # --- TAB 3: QUẢN LÝ HỢP ĐỒNG & CHỨNG TỪ (HĐ, BBGN, BBNT, ĐNTT, BBTL) ---
     elif menu == "3. Quản Lý Hợp Đồng & Chứng Từ":
         st.header("📑 Quản Lý Hợp Đồng & Chứng Từ Trọn Gói")
-        tab_create_hd, tab_list_hd = st.tabs(["➕ Lập Hợp Đồng Mới", "📋 Danh Sách & Quản Lý Tình Trạng Hợp Đồng"])
+        tab_create_hd, tab_list_hd = st.tabs(["➕ Lập Hợp Đồng Mới", "📋 Danh Sách Hợp Đồng Đã Lập"])
         
         with tab_create_hd:
-            # 1. Chọn loại hợp đồng
-            contract_type = st.radio(
-                "📌 Chọn loại hợp đồng cần lập:",
-                ["Hợp đồng mua bán", "Hợp đồng in ấn", "Hợp đồng in ấn và quảng cáo"],
-                horizontal=True
-            )
-            
-            seq_info = get_next_contract_seq(contract_type)
-            st.info(f"📌 **Số hiệu hồ sơ tự động cấp phát cho năm 20{seq_info['year']}:**
-"
-                    f"- Số HĐ: **{seq_info['so_hd']}** | Số BBGN: **{seq_info['so_bbgn']}**
-"
+            seq_info = get_next_contract_seq()
+            st.info(f"📌 **Số hiệu hồ sơ tự động cấp phát cho năm 20{seq_info['year']}:**\n"
+                    f"- Số HĐ: **{seq_info['so_hd']}** | Số BBGN: **{seq_info['so_bbgn']}**\n"
                     f"- Số BBNT: **{seq_info['so_bbnt']}** | Số ĐNTT: **{seq_info['so_dntt']}** | Số BBTL: **{seq_info['so_bbtl']}**")
             
             all_existing_orders = fetch_all_orders()
@@ -1498,7 +1253,7 @@ def main_app():
                     pre_addr = target_ord.get('customer', {}).get('address', '')
                     pre_items = target_ord.get('items', [])
 
-            st.subheader("1. Thông tin Bên Mua / Bên Đặt Hàng (Bên B)")
+            st.subheader("1. Thông tin pháp lý Bên Mua (Bên B)")
             col_b1, col_b2 = st.columns(2)
             c_name = col_b1.text_input("Tên Doanh nghiệp / Khách hàng Bên B (*)", value=pre_name)
             c_mst = col_b2.text_input("Mã số thuế Bên B (*)")
@@ -1510,13 +1265,10 @@ def main_app():
             c_auth = col_b2.text_input("Văn bản ủy quyền (nếu có)")
             c_bank_no = col_b1.text_input("Số tài khoản ngân hàng Bên B")
             c_bank_name = col_b2.text_input("Tại Ngân hàng - Chi nhánh")
-            
-            c_desc = st.text_input("Nội dung tóm tắt hợp đồng", value=f"{contract_type} cho {c_name}" if c_name else f"{contract_type}")
 
             st.divider()
             st.subheader("2. Chi tiết hàng hóa & Giá (Tự động tính thuế & thành tiền)")
             
-            default_item_name = "In ấn biểu mẫu, ấn phẩm văn phòng" if contract_type != "Hợp đồng in ấn và quảng cáo" else "Thiết kế in ấn pano, backdrop và ấn phẩm quảng cáo"
             if 'contract_items' not in st.session_state or sel_o != "-- Tạo mới hoàn toàn --":
                 if pre_items:
                     formatted_pre = []
@@ -1537,8 +1289,8 @@ def main_app():
                     st.session_state.contract_items = formatted_pre
                 else:
                     st.session_state.contract_items = [{
-                        "Tên hàng hóa": default_item_name,
-                        "ĐVT": "Cuốn" if "in" in contract_type.lower() else "Cái",
+                        "Tên hàng hóa": "In ấn biểu mẫu, bao thư, ấn phẩm văn phòng",
+                        "ĐVT": "Cuốn",
                         "Số lượng": 100.0,
                         "Đơn giá": 50000.0,
                         "% Thuế VAT": 10.0,
@@ -1562,7 +1314,7 @@ def main_app():
                 key="editor_contract_items"
             )
 
-            # Tính toán chuẩn xác theo công thức:
+            # Tính toán chính xác theo công thức:
             # thanhtien = (soluong x dongia) + VAT; VAT = (soluong x dongia) x thuesuat
             calc_items = []
             grand_total = 0.0
@@ -1594,21 +1346,18 @@ def main_app():
             col_t1, col_t2, col_t3 = st.columns(3)
             sign_date = col_t1.date_input("Ngày ký hồ sơ", datetime.now())
             warranty_mo = col_t2.number_input("Thời gian bảo hành (Tháng)", min_value=0, value=12)
-            deliver_days = col_t3.number_input("Thời gian hoàn thành/giao (Ngày)", min_value=1, value=5)
+            deliver_days = col_t3.number_input("Thời gian giao hàng (Ngày)", min_value=1, value=5)
 
             col_pay1, col_pay2 = st.columns(2)
             adv_percent = col_pay1.slider("Tỷ lệ tạm ứng Đợt 1 (%)", min_value=10, max_value=90, value=50, step=10)
             dot1_val = grand_total * (adv_percent / 100)
             dot2_val = grand_total - dot1_val
-            col_pay2.write(f"• Tạm ứng Đợt 1 ({adv_percent}%): **{format_currency(dot1_val)} đ**
-• Quyết toán Đợt 2 ({100-adv_percent}%): **{format_currency(dot2_val)} đ**")
+            col_pay2.write(f"• Tạm ứng Đợt 1 ({adv_percent}%): **{format_currency(dot1_val)} đ**\n• Quyết toán Đợt 2 ({100-adv_percent}%): **{format_currency(dot2_val)} đ**")
 
             col_r1, col_r2, col_r3 = st.columns(3)
             rec_name = col_r1.text_input("Người nhận hàng (trên BBGN)", value=c_rep)
             rec_role = col_r2.text_input("Chức vụ người nhận", value="Thủ kho / Đại diện")
             rec_phone = col_r3.text_input("SĐT người nhận", value=c_phone)
-
-            init_status = st.selectbox("Tình trạng ban đầu của hợp đồng:", ["Chuẩn bị ký", "Đã ký", "Đã nhận lại hợp đồng", "Chưa nhận lại hợp đồng"])
 
             st.write("---")
             if st.button("📝 TẠO VÀ XUẤT TRỌN BỘ HỒ SƠ (.DOCX)", type="primary", use_container_width=True):
@@ -1617,7 +1366,6 @@ def main_app():
                 else:
                     payload = {
                         "so_hd": seq_info['so_hd'],
-                        "loai_hd": contract_type,
                         "so_bbgn": seq_info['so_bbgn'],
                         "so_bbnt": seq_info['so_bbnt'],
                         "so_dntt": seq_info['so_dntt'],
@@ -1627,12 +1375,10 @@ def main_app():
                         "khach_hang": c_name,
                         "mst": c_mst,
                         "nguoi_dd": c_rep,
-                        "noi_dung": c_desc,
                         "tong_tien": grand_total,
                         "sotienbangchu": txt_money,
                         "dot1_amt": dot1_val,
                         "dot2_amt": dot2_val,
-                        "tinh_trang": init_status,
                         "customer": {
                             "name": c_name, "mst": c_mst, "address": c_addr,
                             "phone": c_phone, "email": c_email, "rep_name": c_rep,
@@ -1651,7 +1397,7 @@ def main_app():
                         }
                     }
 
-                    with st.spinner("Đang khởi tạo tài liệu Word đầy đủ theo mẫu..."):
+                    with st.spinner("Đang khởi tạo tài liệu Word..."):
                         docx_bytes = create_full_contract_docx(payload)
                         save_contract_to_sheet(payload)
                         st.session_state['last_docx'] = docx_bytes
@@ -1667,99 +1413,60 @@ def main_app():
                     type="primary"
                 )
 
-        # --- TAB DANH SÁCH & QUẢN LÝ TÌNH TRẠNG HỢP ĐỒNG ---
         with tab_list_hd:
-            st.subheader("📋 Bảng Quản Lý Hợp Đồng & Tình Trạng Ký Kết")
+            st.subheader("Tra Cứu Hồ Sơ Hợp Đồng")
             contracts_data = fetch_all_contracts()
             if not contracts_data:
                 st.info("Chưa có hợp đồng nào được lưu trong hệ thống.")
             else:
                 df_c = pd.DataFrame(contracts_data)
-                
-                # Bổ sung các cột nếu thiếu
-                if 'noi_dung' not in df_c.columns: df_c['noi_dung'] = ""
-                if 'loai_hd' not in df_c.columns: df_c['loai_hd'] = "Hợp đồng mua bán"
-                if 'tinh_trang' not in df_c.columns: df_c['tinh_trang'] = "Chuẩn bị ký"
-                
-                # Bảng thống kê số lượng theo tình trạng
-                tt_counts = df_c['tinh_trang'].value_counts()
-                col_s1, col_s2, col_s3, col_s4 = st.columns(4)
-                col_s1.metric("📝 Chuẩn bị ký", tt_counts.get("Chuẩn bị ký", 0))
-                col_s2.metric("✍️ Đã ký", tt_counts.get("Đã ký", 0))
-                col_s3.metric("📥 Đã nhận lại HĐ", tt_counts.get("Đã nhận lại hợp đồng", 0))
-                col_s4.metric("⏳ Chưa nhận lại HĐ", tt_counts.get("Chưa nhận lại hợp đồng", 0))
-                st.divider()
-
-                # Bảng hiển thị thông tin chính
-                df_view = df_c[['so_hd', 'loai_hd', 'khach_hang', 'noi_dung', 'tong_tien', 'tinh_trang', 'ngay_ky']].copy()
+                df_view = df_c[['so_hd', 'ngay_ky', 'khach_hang', 'mst', 'tong_tien', 'dot1_amt', 'dot2_amt']].copy()
                 df_view['tong_tien'] = df_view['tong_tien'].apply(format_currency)
-                df_view.columns = ["Số Hợp Đồng", "Loại Hợp Đồng", "Khách Hàng (Bên B)", "Nội Dung Hợp Đồng", "Tổng Giá Trị (VNĐ)", "Tình Trạng Hợp Đồng", "Ngày Ký"]
+                df_view['dot1_amt'] = df_view['dot1_amt'].apply(format_currency)
+                df_view['dot2_amt'] = df_view['dot2_amt'].apply(format_currency)
+                df_view.columns = ["Số HĐ", "Ngày ký", "Bên Mua", "Mã số thuế", "Tổng tiền", "Tạm ứng (Đ1)", "Quyết toán (Đ2)"]
                 
-                sel_c_event = st.dataframe(
-                    df_view, 
-                    use_container_width=True, 
-                    hide_index=True, 
-                    selection_mode="single-row", 
-                    on_select="rerun", 
-                    key="tbl_contracts_view"
-                )
+                sel_c_event = st.dataframe(df_view, use_container_width=True, hide_index=True, selection_mode="single-row", on_select="rerun", key="tbl_contracts_view")
                 
                 if sel_c_event.selection.rows:
                     idx_c = sel_c_event.selection.rows[0]
                     if idx_c < len(contracts_data):
                         c_selected = contracts_data[idx_c]
-                        st.write("---")
-                        st.subheader(f"🛠️ Cập nhật & Thao tác cho hợp đồng: {c_selected['so_hd']}")
+                        st.write(f"📄 Tái xuất file Word cho: **{c_selected['so_hd']}** - Khách: **{c_selected['khach_hang']}**")
                         
-                        col_u1, col_u2 = st.columns(2)
-                        with col_u1:
-                            curr_tt = c_selected.get('tinh_trang', 'Chuẩn bị ký')
-                            tt_options = ["Chuẩn bị ký", "Đã ký", "Đã nhận lại hợp đồng", "Chưa nhận lại hợp đồng"]
-                            curr_idx = tt_options.index(curr_tt) if curr_tt in tt_options else 0
-                            new_tt = st.selectbox("Cập nhật Tình Trạng Hợp Đồng:", tt_options, index=curr_idx, key=f"sel_tt_{c_selected['so_hd']}")
-                            if st.button("💾 Lưu Trạng Thái Mới", type="primary"):
-                                if update_contract_status_sheet(c_selected['so_hd'], new_tt):
-                                    st.success(f"Đã cập nhật trạng thái hợp đồng {c_selected['so_hd']} thành '{new_tt}'!")
-                                    time.sleep(0.5)
-                                    st.rerun()
+                        raw_date = c_selected.get('ngay_ky', '')
+                        try: p_date = datetime.strptime(raw_date, "%Y-%m-%d")
+                        except: p_date = datetime.now()
+                            
+                        c_rebuild = {
+                            "so_hd": c_selected['so_hd'],
+                            "so_bbgn": c_selected['so_hd'].replace("HĐMB", "BBGN"),
+                            "so_bbnt": c_selected['so_hd'].replace("HĐMB", "BBNT"),
+                            "so_dntt": c_selected['so_hd'].replace("HĐMB", "ĐNTT"),
+                            "so_bbtl": c_selected['so_hd'].replace("HĐMB", "BBTL"),
+                            "ngay_ky_dt": p_date,
+                            "tong_tien": float(c_selected.get('tong_tien', 0)),
+                            "sotienbangchu": read_money_vietnamese(c_selected.get('tong_tien', 0)),
+                            "dot1_amt": float(c_selected.get('dot1_amt', 0)),
+                            "dot2_amt": float(c_selected.get('dot2_amt', 0)),
+                            "customer": {
+                                "name": c_selected.get('khach_hang'),
+                                "mst": c_selected.get('mst'),
+                                "address": c_selected.get('extra_info', {}).get('delivery_address', ''),
+                                "phone": c_selected.get('extra_info', {}).get('receiver_phone', ''),
+                                "rep_name": c_selected.get('nguoi_dd')
+                            },
+                            "items": c_selected.get('items', []),
+                            "extra_info": c_selected.get('extra_info', {})
+                        }
                         
-                        with col_u2:
-                            raw_date = c_selected.get('ngay_ky', '')
-                            try: p_date = datetime.strptime(raw_date, "%Y-%m-%d")
-                            except: p_date = datetime.now()
-                            
-                            c_rebuild = {
-                                "so_hd": c_selected['so_hd'],
-                                "loai_hd": c_selected.get('loai_hd', 'Hợp đồng mua bán'),
-                                "so_bbgn": c_selected['so_hd'].replace("HĐMB", "BBGN").replace("HĐIA", "BBGN").replace("HĐQC", "BBGN"),
-                                "so_bbnt": c_selected['so_hd'].replace("HĐMB", "BBNT").replace("HĐIA", "BBNT").replace("HĐQC", "BBNT"),
-                                "so_dntt": c_selected['so_hd'].replace("HĐMB", "ĐNTT").replace("HĐIA", "ĐNTT").replace("HĐQC", "ĐNTT"),
-                                "so_bbtl": c_selected['so_hd'].replace("HĐMB", "BBTL").replace("HĐIA", "BBTL").replace("HĐQC", "BBTL"),
-                                "ngay_ky_dt": p_date,
-                                "tong_tien": float(c_selected.get('tong_tien', 0)),
-                                "sotienbangchu": read_money_vietnamese(c_selected.get('tong_tien', 0)),
-                                "dot1_amt": float(c_selected.get('dot1_amt', 0)),
-                                "dot2_amt": float(c_selected.get('dot2_amt', 0)),
-                                "customer": {
-                                    "name": c_selected.get('khach_hang'),
-                                    "mst": c_selected.get('mst'),
-                                    "address": c_selected.get('extra_info', {}).get('delivery_address', ''),
-                                    "phone": c_selected.get('extra_info', {}).get('receiver_phone', ''),
-                                    "email": c_selected.get('extra_info', {}).get('receiver_email', ''),
-                                    "rep_name": c_selected.get('nguoi_dd')
-                                },
-                                "items": c_selected.get('items', []),
-                                "extra_info": c_selected.get('extra_info', {})
-                            }
-                            
-                            st.write("📄 **Tải lại văn bản Word (.docx):**")
-                            re_docx = create_full_contract_docx(c_rebuild)
-                            st.download_button(
-                                label=f"🖨️ Tải Lại Hồ Sơ ({c_selected['so_hd']}.docx)",
-                                data=re_docx,
-                                file_name=f"HoSo_{c_selected['so_hd'].replace('/', '_')}.docx",
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                            )
+                        re_docx = create_full_contract_docx(c_rebuild)
+                        st.download_button(
+                            label="🖨️ Tải Lại File Word",
+                            data=re_docx,
+                            file_name=f"HoSo_{c_selected['so_hd'].replace('/', '_')}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
 
     # --- TAB 4: KHÁCH THÊM ---
     elif menu == "4. Khách Thêm":
@@ -1784,10 +1491,7 @@ def main_app():
                 calc_pit_tax = (ext_vat_rate / 100) * calc_not_done
                 calc_refund = calc_not_done - calc_pit_tax
                 
-                st.info(f"💡 **Thông số tính toán:** 
-- Số tiền không làm: **{format_currency(calc_not_done)}**
-- Thuế TNCN: **{format_currency(calc_pit_tax)}**
-- Số tiền còn chuyển lại: **{format_currency(calc_refund)}**")
+                st.info(f"💡 **Thông số tính toán:** \n- Số tiền không làm: **{format_currency(calc_not_done)}**\n- Thuế TNCN: **{format_currency(calc_pit_tax)}**\n- Số tiền còn chuyển lại: **{format_currency(calc_refund)}**")
                 
                 if st.form_submit_button("💾 Lưu Thông Tin"):
                     if ext_name:
@@ -2105,7 +1809,7 @@ def main_app():
                             label="📥 Xuất bảng kê ra file Excel",
                             data=buffer,
                             file_name=f"HoaHong_ChuaChi_HoanThanh_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                         )
                     except Exception as ex:
                         st.error(f"Không thể tạo file Excel: {ex}")
