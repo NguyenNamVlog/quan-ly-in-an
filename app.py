@@ -7,19 +7,28 @@ import requests
 import unicodedata
 import traceback
 import io
+import re
 from datetime import datetime
 from fpdf import FPDF
 from num2words import num2words
 import gspread
 from google.oauth2.service_account import Credentials
-import plotly.express as px  # Thư viện vẽ biểu đồ đẹp
+import plotly.express as px
+
+# Thư viện xử lý xuất file Word (.docx)
+from docx import Document
+from docx.shared import Inches, Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL
+from docx.oxml import parse_xml
+from docx.oxml.ns import nsdecls
 
 # --- CẤU HÌNH ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1Oq3fo2vK-LGHMZq3djZ3mmX5TZMGVZeJVu-MObC5_cU/edit"
 FONT_FILENAME = 'arial.ttf' 
 HEADER_IMAGE = 'tieu_de.png'
 
-# --- HÀM HỖ TRỢ ---
+# --- HÀM HỖ TRỢ CHUNG ---
 def remove_accents(input_str):
     if not input_str: return ""
     input_str = str(input_str)
@@ -38,8 +47,14 @@ def format_currency(value):
     except: return "0"
 
 def read_money_vietnamese(amount):
-    try: return num2words(amount, lang='vi').capitalize() + " đồng chẵn."
-    except: return "..................... đồng."
+    try:
+        num = int(round(float(amount)))
+        if num == 0: return "Không đồng chẵn."
+        text = num2words(num, lang='vi').capitalize()
+        text = text.replace("mươi một", "mươi mốt")
+        return text + " đồng chẵn."
+    except:
+        return "..................... đồng chẵn."
 
 # --- KẾT NỐI GOOGLE SHEETS ---
 @st.cache_resource
@@ -60,7 +75,7 @@ def get_gspread_client():
         st.error(f"⚠️ Lỗi kết nối Google: {e}")
         return None
 
-# --- CUSTOMER MANAGEMENT ---
+# --- QUẢN LÝ KHÁCH HÀNG ---
 def fetch_customers():
     client = get_gspread_client()
     if not client: return []
@@ -89,7 +104,7 @@ def save_customer_db(name, phone, address):
             st.cache_data.clear() 
     except: pass
 
-# --- USER MANAGEMENT ---
+# --- QUẢN LÝ NGƯỜI DÙNG ---
 def init_users():
     client = get_gspread_client()
     if not client: return
@@ -136,7 +151,7 @@ def check_login(username, password):
             return u
     return None
 
-# --- DATABASE CORE ---
+# --- DATABASE ĐƠN HÀNG (ORDERS) ---
 def fetch_all_orders():
     client = get_gspread_client()
     if not client: return []
@@ -205,17 +220,13 @@ def update_commission_status(order_id, status_text):
         return True
     except: return False
 
-# --- HÀM UPDATE HÀNG LOẠT HOA HỒNG ---
 def update_multiple_commissions(order_ids, status_text):
     client = get_gspread_client()
     if not client or not order_ids: return False
     try:
         sh = client.open_by_url(SHEET_URL)
         ws = sh.worksheet("Orders")
-        
-        # Lấy toàn bộ cột ID để tìm nhanh hơn
         id_list = ws.col_values(1)
-        
         for oid in order_ids:
             if oid in id_list:
                 row_idx = id_list.index(oid) + 1
@@ -224,7 +235,6 @@ def update_multiple_commissions(order_ids, status_text):
                 except: fin = {}
                 fin['commission_status'] = status_text
                 ws.update_cell(row_idx, 7, json.dumps(fin, ensure_ascii=False))
-                
         st.cache_data.clear()
         return True
     except:
@@ -320,7 +330,6 @@ def gen_id():
     orders = fetch_all_orders()
     year = datetime.now().strftime("%y")
     max_num = 0
-    
     for o in orders:
         oid = str(o.get('order_id', '')).strip()
         if "/DH." + year in oid:
@@ -331,11 +340,10 @@ def gen_id():
                     max_num = num
             except:
                 continue
-                
     next_num = max_num + 1
     return f"{next_num:03d}/DH.{year}"
 
-# --- DATABASE CHO KHÁCH THÊM ---
+# --- DATABASE KHÁCH THÊM ---
 def fetch_extra_customers():
     client = get_gspread_client()
     if not client: return []
@@ -355,7 +363,6 @@ def save_extra_customer(id_, name, pre_tax, actual, not_done, vat_rate, pit_tax,
         except:
             ws = sh.add_worksheet("ExtraCustomers", 1000, 10)
             ws.append_row(["id", "customer", "pre_tax", "actual", "not_done", "vat_rate", "pit_tax", "refund", "status"])
-        
         ws.append_row([str(id_), name, float(pre_tax), float(actual), float(not_done), float(vat_rate), float(pit_tax), float(refund), status])
         st.cache_data.clear()
         return True
@@ -389,7 +396,365 @@ def update_extra_customers_batch(df_records):
         return True
     except: return False
 
-# --- PDF GENERATOR ---
+# --- QUẢN LÝ HỢP ĐỒNG (CONTRACTS DATABASE & AUTO-NUMBERING) ---
+def get_next_contract_seq():
+    """
+    Tự động tăng số từ 10, reset lại từ 10 khi qua năm mới.
+    Format theo yêu cầu:
+    1. Số HĐ: [seq]/HĐMB-ALP.[YY] (Ví dụ: 10/HĐMB-ALP.26)
+    2. Số BBGN: [seq]/BBGN.ALP.[YY]
+    3. Số BBNT: [seq]/BBNT.ALP.[YY]
+    4. Số ĐNTT: [seq]/ĐNTT.ALP.[YY]
+    5. Số BBTL: [seq]/BBTL.ALP.[YY]
+    """
+    client = get_gspread_client()
+    curr_year = datetime.now().strftime("%y")
+    max_num = 9  # Bắt đầu bằng 10 (9 + 1)
+    
+    if client:
+        try:
+            sh = client.open_by_url(SHEET_URL)
+            try:
+                ws = sh.worksheet("Contracts")
+                col_hd = ws.col_values(1)
+                for code in col_hd:
+                    code_str = str(code).strip()
+                    if f"-ALP.{curr_year}" in code_str:
+                        m = re.match(r"^(\d+)/HĐMB-ALP", code_str)
+                        if m:
+                            val = int(m.group(1))
+                            if val > max_num:
+                                max_num = val
+            except: pass
+        except: pass
+
+    next_seq = max_num + 1
+    return {
+        "seq": next_seq,
+        "year": curr_year,
+        "so_hd": f"{next_seq}/HĐMB-ALP.{curr_year}",
+        "so_bbgn": f"{next_seq}/BBGN.ALP.{curr_year}",
+        "so_bbnt": f"{next_seq}/BBNT.ALP.{curr_year}",
+        "so_dntt": f"{next_seq}/ĐNTT.ALP.{curr_year}",
+        "so_bbtl": f"{next_seq}/BBTL.ALP.{curr_year}"
+    }
+
+def save_contract_to_sheet(contract_data):
+    client = get_gspread_client()
+    if not client: return False
+    try:
+        sh = client.open_by_url(SHEET_URL)
+        try:
+            ws = sh.worksheet("Contracts")
+        except:
+            ws = sh.add_worksheet("Contracts", 1000, 15)
+            ws.append_row([
+                "so_hd", "ngay_ky", "khach_hang", "mst", "nguoi_dd", "tong_tien", 
+                "dot1_amt", "dot2_amt", "items_json", "extra_json", "created_at"
+            ])
+        ws.append_row([
+            contract_data['so_hd'],
+            contract_data['ngay_ky'],
+            contract_data['khach_hang'],
+            contract_data['mst'],
+            contract_data['nguoi_dd'],
+            float(contract_data['tong_tien']),
+            float(contract_data['dot1_amt']),
+            float(contract_data['dot2_amt']),
+            json.dumps(contract_data['items'], ensure_ascii=False),
+            json.dumps(contract_data['extra_info'], ensure_ascii=False),
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ])
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"Lỗi lưu hợp đồng: {e}")
+        return False
+
+def fetch_all_contracts():
+    client = get_gspread_client()
+    if not client: return []
+    try:
+        sh = client.open_by_url(SHEET_URL)
+        ws = sh.worksheet("Contracts")
+        raw = ws.get_all_records()
+        for r in raw:
+            try:
+                r['items'] = json.loads(r.get('items_json', '[]'))
+                r['extra_info'] = json.loads(r.get('extra_json', '{}'))
+            except: pass
+        return raw
+    except: return []
+
+# --- HÀM XUẤT TRỌN BỘ 5 VĂN BẢN HỢP ĐỒNG WORD (.DOCX) ---
+def create_full_contract_docx(c_data):
+    doc = Document()
+    
+    for section in doc.sections:
+        section.top_margin = Inches(0.79)
+        section.bottom_margin = Inches(0.79)
+        section.left_margin = Inches(0.79)
+        section.right_margin = Inches(0.79)
+
+    def set_run_font(run, size=11, bold=False, italic=False, color=None):
+        run.font.name = 'Times New Roman'
+        run.font.size = Pt(size)
+        run.bold = bold
+        run.italic = italic
+        if color: run.font.color.rgb = color
+
+    def add_p(text="", align=WD_ALIGN_PARAGRAPH.LEFT, bold=False, italic=False, size=11, space_after=3):
+        p = doc.add_paragraph()
+        p.alignment = align
+        p.paragraph_format.space_after = Pt(space_after)
+        p.paragraph_format.line_spacing = 1.15
+        if text:
+            r = p.add_run(text)
+            set_run_font(r, size=size, bold=bold, italic=italic)
+        return p
+
+    def add_quoc_hieu(so_vb, tieu_de_vb):
+        add_p("CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM", align=WD_ALIGN_PARAGRAPH.CENTER, bold=True, size=12, space_after=2)
+        add_p("Độc lập - Tự do - Hạnh phúc", align=WD_ALIGN_PARAGRAPH.CENTER, bold=True, size=12, space_after=4)
+        add_p("-------------------", align=WD_ALIGN_PARAGRAPH.CENTER, bold=True, size=10, space_after=10)
+        add_p(tieu_de_vb.upper(), align=WD_ALIGN_PARAGRAPH.CENTER, bold=True, size=14, space_after=3)
+        add_p(f"Số: {so_vb}", align=WD_ALIGN_PARAGRAPH.CENTER, italic=True, size=11, space_after=10)
+
+    so_hd = c_data['so_hd']
+    so_bbgn = c_data['so_bbgn']
+    so_bbnt = c_data['so_bbnt']
+    so_dntt = c_data['so_dntt']
+    so_bbtl = c_data['so_bbtl']
+    
+    d_day = c_data['ngay_ky_dt'].strftime("%d")
+    d_month = c_data['ngay_ky_dt'].strftime("%m")
+    d_year = c_data['ngay_ky_dt'].strftime("%Y")
+    
+    cust = c_data['customer']
+    items = c_data['items']
+    ext = c_data['extra_info']
+    grand_total = float(c_data['tong_tien'])
+    dot1_amt = float(c_data['dot1_amt'])
+    dot2_amt = float(c_data['dot2_amt'])
+
+    # 1. HỢP ĐỒNG MUA BÁN HÀNG HÓA
+    add_quoc_hieu(so_hd, "HỢP ĐỒNG MUA BÁN HÀNG HÓA")
+    add_p("- Căn cứ Bộ luật Dân sự số 91/2015/QH13 được Quốc hội nước CHXHCN Việt Nam thông qua ngày 24/11/2015 và các văn bản hướng dẫn thi hành;", italic=True)
+    add_p("- Căn cứ Luật Thương mại số 36/2005/QH11 được Quốc hội nước CHXHCN Việt Nam thông qua ngày 14/06/2005 và các văn bản hướng dẫn thi hành;", italic=True)
+    add_p("- Căn cứ nhu cầu mua bán hàng hóa và năng lực thực tế của hai Bên,", italic=True)
+    add_p(f"Hôm nay, ngày {d_day} tháng {d_month} năm {d_year}, tại trụ sở CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT, hai Bên gồm có:", italic=True, space_after=6)
+
+    add_p("BÊN BÁN (BÊN A): CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT", bold=True)
+    add_p("• Địa chỉ trụ sở: N1/1, Tổ 12, Khu phố 3, Phường Long Hưng, Thành phố Đồng Nai, Việt Nam")
+    add_p("• Mã số thuế: 3603995632")
+    add_p("• Điện thoại: 0706 279 379               • Email: anlocphat68.ltd@gmail.com")
+    add_p("• Tài khoản ngân hàng số: 868080 tại Ngân hàng TMCP Kỹ thương Việt Nam (Techcombank) - THP- TCB TAM HIEP")
+    add_p("• Đại diện bởi: Ông LÊ VĂN VẠN            • Chức vụ: Giám đốc")
+    add_p("")
+
+    add_p(f"BÊN MUA (BÊN B): {cust.get('name', '').upper()}", bold=True)
+    add_p(f"• Địa chỉ trụ sở: {cust.get('address', '')}")
+    add_p(f"• Mã số thuế: {cust.get('mst', '')}")
+    add_p(f"• Điện thoại: {cust.get('phone', '')}               • Email: {cust.get('email', '')}")
+    add_p(f"• Tài khoản ngân hàng số: {cust.get('bank_no', '')} tại Ngân hàng: {cust.get('bank_name', '')}")
+    add_p(f"• Đại diện bởi: {cust.get('rep_name', '')}            • Chức vụ: {cust.get('rep_role', 'Giám đốc')}")
+    if cust.get('auth_doc'):
+        add_p(f"• Văn bản ủy quyền: {cust.get('auth_doc')}")
+    
+    add_p("Sau khi bàn bạc và thống nhất trên tinh thần bình đẳng và cùng có lợi, hai Bên thỏa thuận ký kết Hợp đồng mua bán hàng hóa với các điều khoản và điều kiện cụ thể sau đây:")
+    add_p("ĐIỀU 1. ĐỐI TƯỢNG HÀNG HÓA VÀ GIÁ CẢ", bold=True)
+    add_p("1.1. Bên Bán đồng ý bán và Bên Mua đồng ý mua danh mục hàng hóa với quy cách, số lượng và đơn giá chi tiết như sau:")
+
+    # Bảng hàng hóa
+    tbl = doc.add_table(rows=1, cols=7)
+    tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
+    headers = ["STT", "Tên hàng hóa / Mô tả quy cách", "ĐVT", "Số lượng", "Đơn giá (VNĐ)", "Thuế GTGT", "Thành tiền (VNĐ)"]
+    hdr_cells = tbl.rows[0].cells
+    for idx, h in enumerate(headers):
+        hdr_cells[idx].text = h
+        p = hdr_cells[idx].paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        set_run_font(p.runs[0], size=10, bold=True)
+        hdr_cells[idx]._tc.get_or_add_tcPr().append(parse_xml(r'<w:shd {} w:fill="EDEDED"/>'.format(nsdecls('w'))))
+
+    for idx, it in enumerate(items):
+        r_cells = tbl.add_row().cells
+        r_cells[0].text = str(idx + 1)
+        r_cells[1].text = str(it.get('name', ''))
+        r_cells[2].text = str(it.get('unit', ''))
+        r_cells[3].text = format_currency(it.get('qty', 0))
+        r_cells[4].text = format_currency(it.get('price', 0))
+        r_cells[5].text = f"{it.get('vat_rate', 0)}%"
+        r_cells[6].text = format_currency(it.get('total_line', 0))
+        
+        r_cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r_cells[2].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r_cells[3].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        r_cells[4].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        r_cells[5].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r_cells[6].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        for c in r_cells: set_run_font(c.paragraphs[0].runs[0], size=10)
+
+    tot_row = tbl.add_row().cells
+    tot_row[0].merge(tot_row[5])
+    tot_row[0].text = "TỔNG CỘNG GIÁ TRỊ HỢP ĐỒNG (ĐÃ BAO GỒM THUẾ GTGT):"
+    tot_row[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    set_run_font(tot_row[0].paragraphs[0].runs[0], size=10, bold=True)
+    tot_row[6].text = format_currency(grand_total)
+    tot_row[6].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    set_run_font(tot_row[6].paragraphs[0].runs[0], size=10, bold=True)
+
+    add_p("")
+    add_p(f"1.2. Tổng giá trị Hợp đồng bằng chữ: {c_data['sotienbangchu']}")
+    add_p("1.3. Đơn giá nêu trên đã bao gồm thuế Giá trị gia tăng (GTGT), chi phí đóng gói chuẩn của nhà sản xuất. Mọi chi phí phát sinh ngoài thỏa thuận chỉ có hiệu lực khi hai Bên lập phụ lục văn bản có đóng dấu xác nhận.")
+    
+    add_p("ĐIỀU 2. TIÊU CHUẨN CHẤT LƯỢNG VÀ BẢO HÀNH", bold=True)
+    add_p("2.1. Hàng hóa do Bên Bán cung cấp phải mới 100%, chưa qua sử dụng, đúng chủng loại, đúng tiêu chuẩn kỹ thuật của nhà sản xuất.")
+    add_p(f"2.2. Thời hạn bảo hành sản phẩm: {ext.get('warranty_months', '12')} tháng kể từ ngày hai Bên ký kết Biên bản nghiệm thu và bàn giao hàng hóa hoàn tất.")
+    add_p("2.3. Điều kiện bảo hành: Bên Bán chỉ chịu trách nhiệm bảo hành đối với các khuyết tật, hư hỏng do lỗi kỹ thuật của nhà sản xuất. Miễn trừ trách nhiệm bảo hành do bảo quản sai hướng dẫn, tự ý tháo dỡ hoặc can thiệp kỹ thuật trái phép.")
+
+    add_p("ĐIỀU 3. THỜI HẠN, ĐỊA ĐIỂM VÀ PHƯƠNG THỨC GIAO NHẬN", bold=True)
+    add_p(f"3.1. Thời hạn giao hàng: Bên Bán sẽ giao hàng cho Bên Mua trong vòng {ext.get('delivery_days', '05')} ngày làm việc kể từ ngày hoàn tất nghĩa vụ tạm ứng.")
+    add_p(f"3.2. Địa điểm giao hàng: Giao tại kho của Bên Mua tại: {ext.get('delivery_address', cust.get('address'))}")
+    add_p("3.3. Chi phí bốc xếp và vận chuyển: Do bên bán chịu trách nhiệm chi trả và được tính vào giá hàng hóa.")
+
+    add_p("ĐIỀU 4. PHƯƠNG THỨC VÀ TIẾN ĐỘ THANH TOÁN", bold=True)
+    add_p("4.1. Hình thức thanh toán: Chuyển khoản vào tài khoản ngân hàng của Bên Bán.")
+    add_p(f"4.2. Tiến độ thanh toán: Bên Mua thanh toán cho Bên Bán làm 02 đợt:")
+    add_p(f"• Đợt 1 (Tạm ứng): Bên Mua thanh toán {ext.get('adv_pct', 50)}% tổng giá trị Hợp đồng, tương đương: {format_currency(dot1_amt)} VNĐ trong vòng 03 ngày làm việc kể từ ngày ký Hợp đồng.")
+    add_p(f"• Đợt 2 (Dứt điểm): Bên Mua thanh toán toàn bộ {100 - int(ext.get('adv_pct', 50))}% giá trị còn lại, tương đương: {format_currency(dot2_amt)} VNĐ trước khi nhận hàng hoặc trong 05 ngày làm việc kể từ ngày nghiệm thu.")
+
+    add_p("ĐIỀU 5. ĐIỀU KHOẢN CHUNG VÀ HIỆU LỰC HỢP ĐỒNG", bold=True)
+    add_p("Hợp đồng này có hiệu lực kể từ ngày ký, gồm có 04 trang, lập thành 04 bản có giá trị pháp lý như nhau, mỗi Bên giữ 02 bản để thực hiện.")
+    add_p("")
+
+    sig_tab = doc.add_table(rows=1, cols=2)
+    sig_tab.alignment = WD_TABLE_ALIGNMENT.CENTER
+    c1, c2 = sig_tab.rows[0].cells
+    c1.text = "ĐẠI DIỆN BÊN BÁN (BÊN A)\n(Ký tên, đóng dấu)\n\n\n\n\nLÊ VĂN VẠN"
+    c2.text = f"ĐẠI DIỆN BÊN MUA (BÊN B)\n(Ký tên, đóng dấu)\n\n\n\n\n{cust.get('rep_name', '')}"
+    c1.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+    c2.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+    set_run_font(c1.paragraphs[0].runs[0], bold=True)
+    set_run_font(c2.paragraphs[0].runs[0], bold=True)
+
+    # 2. BIÊN BẢN GIAO NHẬN HÀNG HÓA
+    doc.add_page_break()
+    add_quoc_hieu(so_bbgn, "BIÊN BẢN GIAO NHẬN HÀNG HÓA")
+    add_p(f"(Kèm theo Hợp đồng mua bán số: {so_hd})", align=WD_ALIGN_PARAGRAPH.CENTER, italic=True)
+    add_p(f"Hôm nay, ngày {d_day} tháng {d_month} năm {d_year}, tại: {ext.get('delivery_address', cust.get('address'))}. Chúng tôi gồm có:", italic=True)
+    add_p("I. BÊN BÁN (BÊN A): CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT", bold=True)
+    add_p("• Đại diện: Ông LÊ VĂN VẠN - Chức vụ: Giám đốc")
+    add_p(f"II. BÊN NHẬN HÀNG (BÊN MUA - BÊN B): {cust.get('name', '').upper()}", bold=True)
+    add_p(f"• Đại diện nhận: {ext.get('receiver_name', cust.get('rep_name'))} - Chức vụ: {ext.get('receiver_role', 'Đại diện')} - SĐT: {ext.get('receiver_phone', cust.get('phone'))}")
+    add_p("Hai Bên cùng tiến hành bàn giao và tiếp nhận hàng hóa theo các nội dung chi tiết dưới đây:")
+
+    t_gn = doc.add_table(rows=1, cols=5)
+    t_gn.alignment = WD_TABLE_ALIGNMENT.CENTER
+    for idx, h in enumerate(["STT", "Tên hàng hóa / Quy cách", "ĐVT", "SL theo HĐ", "SL thực giao"]):
+        t_gn.rows[0].cells[idx].text = h
+        p = t_gn.rows[0].cells[idx].paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        set_run_font(p.runs[0], size=10, bold=True)
+    for idx, it in enumerate(items):
+        r = t_gn.add_row().cells
+        r[0].text = str(idx + 1)
+        r[1].text = str(it.get('name', ''))
+        r[2].text = str(it.get('unit', ''))
+        r[3].text = format_currency(it.get('qty', 0))
+        r[4].text = format_currency(it.get('qty', 0))
+        r[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r[2].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r[3].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        r[4].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        for c in r: set_run_font(c.paragraphs[0].runs[0], size=10)
+
+    add_p("")
+    add_p("Xác nhận: Bên Mua đã kiểm tra số lượng và ngoại quan hàng hóa thực tế đối chiếu với chứng từ giao nhận, xác nhận Bên Bán đã giao đúng, đủ số lượng và hàng hóa nguyên vẹn.")
+    sig_gn = doc.add_table(rows=1, cols=2)
+    sig_gn.rows[0].cells[0].text = "ĐẠI DIỆN BÊN GIAO HÀNG\n\n\n\n\nLÊ VĂN VẠN"
+    sig_gn.rows[0].cells[1].text = f"ĐẠI DIỆN BÊN NHẬN HÀNG\n\n\n\n\n{ext.get('receiver_name', cust.get('rep_name'))}"
+    sig_gn.rows[0].cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+    sig_gn.rows[0].cells[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # 3. BIÊN BẢN NGHIỆM THU HÀNG HÓA
+    doc.add_page_break()
+    add_quoc_hieu(so_bbnt, "BIÊN BẢN NGHIỆM THU HÀNG HÓA")
+    add_p(f"(Căn cứ theo Hợp đồng mua bán số: {so_hd})", align=WD_ALIGN_PARAGRAPH.CENTER, italic=True)
+    add_p(f"Hôm nay, ngày {d_day} tháng {d_month} năm {d_year}, hai bên tiến hành kiểm tra nghiệm thu:", italic=True)
+    add_p("BÊN BÁN (BÊN A): CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT (Đại diện: Ông LÊ VĂN VẠN)", bold=True)
+    add_p(f"BÊN MUA (BÊN B): {cust.get('name', '')} (Đại diện: {cust.get('rep_name', '')})", bold=True)
+    
+    add_p("KẾT LUẬN CỦA HỘI ĐỒNG NGHIỆM THU:", bold=True)
+    add_p("1. Về số lượng & quy cách: Hàng hóa được cung cấp đủ số lượng, đúng chủng loại thỏa thuận.")
+    add_p("2. Về chất lượng & vận hành: Đạt đầy đủ các thông số kỹ thuật tiêu chuẩn, không có lỗi hư hỏng.")
+    add_p(f"3. Thời điểm kích hoạt bảo hành: {ext.get('warranty_months', '12')} tháng chính thức được tính kể từ ngày ký Biên bản này.")
+    
+    sig_nt = doc.add_table(rows=1, cols=2)
+    sig_nt.rows[0].cells[0].text = "ĐẠI DIỆN KỸ THUẬT BÊN BÁN\n\n\n\n\nLÊ VĂN VẠN"
+    sig_nt.rows[0].cells[1].text = f"ĐẠI DIỆN NGHIỆM THU BÊN MUA\n\n\n\n\n{cust.get('rep_name', '')}"
+    sig_nt.rows[0].cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+    sig_nt.rows[0].cells[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # 4. GIẤY ĐỀ NGHỊ THANH TOÁN
+    doc.add_page_break()
+    add_quoc_hieu(so_dntt, "GIẤY ĐỀ NGHỊ THANH TOÁN")
+    add_p(f"Kính gửi: BAN GIÁM ĐỐC - {cust.get('name', '').upper()}", bold=True)
+    add_p(f"Địa chỉ: {cust.get('address', '')}")
+    add_p(f"- Căn cứ Hợp đồng mua bán hàng hóa số: {so_hd} giữa hai bên;")
+    add_p(f"- Căn cứ Biên bản giao nhận hàng hóa số: {so_bbgn} và Biên bản nghiệm thu số: {so_bbnt};")
+    add_p("Công ty An Lộc Phát trân trọng đề nghị Quý Công ty thanh toán khoản tiền mua hàng như sau:")
+    
+    t_tt = doc.add_table(rows=4, cols=2)
+    t_tt.rows[0].cells[0].text = "1. Tổng giá trị Hợp đồng (bao gồm VAT):"
+    t_tt.rows[0].cells[1].text = f"{format_currency(grand_total)} VNĐ"
+    t_tt.rows[1].cells[0].text = "2. Số tiền Bên Mua đã thanh toán tạm ứng (Đợt 1):"
+    t_tt.rows[1].cells[1].text = f"{format_currency(dot1_amt)} VNĐ"
+    t_tt.rows[2].cells[0].text = "3. Số tiền đề nghị thanh toán đợt này (Đợt 2 / Quyết toán):"
+    t_tt.rows[2].cells[1].text = f"{format_currency(dot2_amt)} VNĐ"
+    t_tt.rows[3].cells[0].text = "4. Số tiền bằng chữ:"
+    t_tt.rows[3].cells[1].text = read_money_vietnamese(dot2_amt)
+    for r in t_tt.rows: set_run_font(r.cells[0].paragraphs[0].runs[0], bold=True)
+
+    add_p("")
+    add_p("THÔNG TIN TÀI KHOẢN THỤ HƯỞNG CỦA BÊN BÁN:", bold=True)
+    add_p("• Tên đơn vị thụ hưởng: CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT")
+    add_p("• Số tài khoản: 868080")
+    add_p("• Mở tại Ngân hàng: Ngân hàng TMCP Kỹ thương Việt Nam (Techcombank) - THP- TCB TAM HIEP")
+    add_p(f"• Nội dung chuyển khoản: Thanh toán tiền hàng theo HĐ số {so_hd}")
+    
+    sig_tt = doc.add_table(rows=1, cols=2)
+    sig_tt.rows[0].cells[1].text = "GIÁM ĐỐC\n(Ký tên, đóng dấu)\n\n\n\n\nLÊ VĂN VẠN"
+    sig_tt.rows[0].cells[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # 5. BIÊN BẢN THANH LÝ HỢP ĐỒNG
+    doc.add_page_break()
+    add_quoc_hieu(so_bbtl, "BIÊN BẢN THANH LÝ HỢP ĐỒNG MUA BÁN")
+    add_p(f"(Căn cứ Hợp đồng mua bán hàng hóa số: {so_hd}, ký ngày {d_day}/{d_month}/{d_year})", align=WD_ALIGN_PARAGRAPH.CENTER, italic=True)
+    add_p(f"Hôm nay, ngày {d_day} tháng {d_month} năm {d_year}, hai Bên gồm có:", italic=True)
+    add_p("BÊN BÁN (BÊN A): CÔNG TY TNHH SẢN XUẤT KINH DOANH THƯƠNG MẠI AN LỘC PHÁT", bold=True)
+    add_p(f"BÊN MUA (BÊN B): {cust.get('name', '').upper()}", bold=True)
+    add_p("Hai Bên cùng thống nhất nghiệm thu thanh lý Hợp đồng:")
+    add_p("ĐIỀU 1. ĐÁNH GIÁ NGHĨA VỤ GIAO NHẬN HÀNG HÓA", bold=True)
+    add_p("Bên Bán đã hoàn thành việc giao toàn bộ hàng hóa đúng số lượng, chất lượng theo thỏa thuận.")
+    add_p("ĐIỀU 2. ĐỐI SOÁT VÀ QUYẾT TOÁN TÀI CHÍNH", bold=True)
+    add_p(f"• Tổng giá trị Hợp đồng thanh toán (đã có VAT): {format_currency(grand_total)} VNĐ.")
+    add_p(f"• Số tiền Bên Mua đã thanh toán cho Bên Bán: {format_currency(grand_total)} VNĐ.")
+    add_p("• Số tiền còn lại Bên Mua phải thanh toán: 0 (Không) đồng. Hai Bên hoàn tất nghĩa vụ tài chính.")
+    add_p("ĐIỀU 3. DUY TRÌ NGHĨA VỤ BẢO HÀNH", bold=True)
+    add_p("Trách nhiệm bảo hành kỹ thuật của Bên Bán vẫn tiếp tục có hiệu lực cho đến hết ngày hết hạn bảo hành.")
+    
+    sig_tl = doc.add_table(rows=1, cols=2)
+    sig_tl.rows[0].cells[0].text = "ĐẠI DIỆN BÊN BÁN (BÊN A)\n\n\n\n\nLÊ VĂN VẠN"
+    sig_tl.rows[0].cells[1].text = f"ĐẠI DIỆN BÊN MUA (BÊN B)\n\n\n\n\n{cust.get('rep_name', '')}"
+    sig_tl.rows[0].cells[0].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+    sig_tl.rows[0].cells[1].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    bio = io.BytesIO()
+    doc.save(bio)
+    return bio.getvalue()
+
+# --- PDF GENERATOR (BÁO GIÁ & GIAO HÀNG) ---
 class PDFGen(FPDF):
     def header(self): pass
 
@@ -445,7 +810,7 @@ def create_pdf(order, title):
         raw_date = order.get('date', '')
         try: odate = datetime.strptime(raw_date, "%Y-%m-%d").strftime("%d/%m/%Y")
         except: odate = raw_date
-        intro_text = "Công ty TNHH SX KD TM An Lộc Phát xin cám ơn sự quan tâm của Quý khách hàng đến sản phẩm và dịch vụ của chúng tôi. Xin trân trọng gửi tới Quý  khách hàng báo giá như sau:"
+        intro_text = "Công ty TNHH SX KD TM An Lộc Phát xin cám ơn sự quan tâm của Quý khách hàng đến sản phẩm và dịch vụ của chúng tôi. Xin trân trọng gửi tới Quý khách hàng báo giá như sau:"
 
     cust = order.get('customer', {})
     items = order.get('items', [])
@@ -589,7 +954,14 @@ def main_app():
         st.error("Lỗi: Chưa cấu hình st.secrets")
         st.stop()
 
-    menu = st.sidebar.radio("CHỨC NĂNG", ["1. Tạo Báo Giá", "2. Quản Lý Đơn Hàng (Pipeline)", "3. Khách Thêm", "4. Sổ Quỹ", "5. Dashboard & Báo Cáo"])
+    menu = st.sidebar.radio("CHỨC NĂNG", [
+        "1. Tạo Báo Giá", 
+        "2. Quản Lý Đơn Hàng (Pipeline)", 
+        "3. Quản Lý Hợp Đồng & Chứng Từ",
+        "4. Khách Thêm", 
+        "5. Sổ Quỹ", 
+        "6. Dashboard & Báo Cáo"
+    ])
 
     if 'cart' not in st.session_state: st.session_state.cart = []
     if 'last_order' not in st.session_state: st.session_state.last_order = None
@@ -702,7 +1074,7 @@ def main_app():
             pdf_bytes = create_pdf(st.session_state.last_order, "BÁO GIÁ")
             st.download_button("🖨️ Tải PDF", pdf_bytes, f"BG_{oid}.pdf", "application/pdf", type="primary")
 
-    # --- TAB 2: QUẢN LÝ ĐƠN HÀNG ---
+    # --- TAB 2: QUẢN LÝ ĐƠN HÀNG (PIPELINE) ---
     elif menu == "2. Quản Lý Đơn Hàng (Pipeline)":
         st.header("🏭 Quy Trình Sản Xuất")
         all_orders = fetch_all_orders()
@@ -733,7 +1105,6 @@ def main_app():
             
             if event.selection.rows:
                 idx = event.selection.rows[0]
-                
                 if idx >= len(current_orders):
                     st.warning("Đang đồng bộ lại dữ liệu bảng đơn hàng...")
                     st.rerun()
@@ -856,10 +1227,250 @@ def main_app():
         with tabs[4]: render_tab_content("Công nợ", "Hoàn thành", "✅ Hoàn Thành Đơn Hàng", None)
         with tabs[5]: render_tab_content("Hoàn thành", None, "", None)
 
-    # --- TAB 3: KHÁCH THÊM ---
-    elif menu == "3. Khách Thêm":
-        st.header("👥 Quản Lý Khách Thêm (Chiết khấu & Hoàn tiền)")
+    # --- TAB 3: QUẢN LÝ HỢP ĐỒNG & CHỨNG TỪ (HĐ, BBGN, BBNT, ĐNTT, BBTL) ---
+    elif menu == "3. Quản Lý Hợp Đồng & Chứng Từ":
+        st.header("📑 Quản Lý Hợp Đồng & Chứng Từ Trọn Gói")
+        tab_create_hd, tab_list_hd = st.tabs(["➕ Lập Hợp Đồng Mới", "📋 Danh Sách Hợp Đồng Đã Lập"])
         
+        with tab_create_hd:
+            seq_info = get_next_contract_seq()
+            st.info(f"📌 **Số hiệu hồ sơ tự động cấp phát cho năm 20{seq_info['year']}:**\n"
+                    f"- Số HĐ: **{seq_info['so_hd']}** | Số BBGN: **{seq_info['so_bbgn']}**\n"
+                    f"- Số BBNT: **{seq_info['so_bbnt']}** | Số ĐNTT: **{seq_info['so_dntt']}** | Số BBTL: **{seq_info['so_bbtl']}**")
+            
+            all_existing_orders = fetch_all_orders()
+            order_opts = ["-- Tạo mới hoàn toàn --"] + [f"{o['order_id']} - {o.get('customer',{}).get('name')}" for o in all_existing_orders]
+            sel_o = st.selectbox("📥 Lấy nhanh dữ liệu từ Đơn Hàng có sẵn:", order_opts)
+            
+            pre_name, pre_phone, pre_addr = "", "", ""
+            pre_items = []
+            if sel_o != "-- Tạo mới hoàn toàn --":
+                chosen_oid = sel_o.split(" - ")[0]
+                target_ord = next((o for o in all_existing_orders if o['order_id'] == chosen_oid), None)
+                if target_ord:
+                    pre_name = target_ord.get('customer', {}).get('name', '')
+                    pre_phone = target_ord.get('customer', {}).get('phone', '')
+                    pre_addr = target_ord.get('customer', {}).get('address', '')
+                    pre_items = target_ord.get('items', [])
+
+            st.subheader("1. Thông tin pháp lý Bên Mua (Bên B)")
+            col_b1, col_b2 = st.columns(2)
+            c_name = col_b1.text_input("Tên Doanh nghiệp / Khách hàng Bên B (*)", value=pre_name)
+            c_mst = col_b2.text_input("Mã số thuế Bên B (*)")
+            c_addr = col_b1.text_input("Địa chỉ trụ sở Bên B (*)", value=pre_addr)
+            c_phone = col_b2.text_input("Số điện thoại liên hệ", value=pre_phone)
+            c_email = col_b1.text_input("Email Bên B")
+            c_rep = col_b2.text_input("Người đại diện pháp luật (*)")
+            c_role = col_b1.text_input("Chức vụ đại diện", value="Giám đốc")
+            c_auth = col_b2.text_input("Văn bản ủy quyền (nếu có)")
+            c_bank_no = col_b1.text_input("Số tài khoản ngân hàng Bên B")
+            c_bank_name = col_b2.text_input("Tại Ngân hàng - Chi nhánh")
+
+            st.divider()
+            st.subheader("2. Chi tiết hàng hóa & Giá (Tự động tính thuế & thành tiền)")
+            
+            if 'contract_items' not in st.session_state or sel_o != "-- Tạo mới hoàn toàn --":
+                if pre_items:
+                    formatted_pre = []
+                    for it in pre_items:
+                        q = float(it.get('qty', 1))
+                        p = float(it.get('price', 0))
+                        v = float(it.get('vat_rate', 10))
+                        vat_val = (q * p) * (v / 100)
+                        tot = (q * p) + vat_val
+                        formatted_pre.append({
+                            "Tên hàng hóa": it.get('name', ''),
+                            "ĐVT": it.get('unit', 'Cái'),
+                            "Số lượng": q,
+                            "Đơn giá": p,
+                            "% Thuế VAT": v,
+                            "Thành tiền": tot
+                        })
+                    st.session_state.contract_items = formatted_pre
+                else:
+                    st.session_state.contract_items = [{
+                        "Tên hàng hóa": "In ấn biểu mẫu, bao thư, ấn phẩm văn phòng",
+                        "ĐVT": "Cuốn",
+                        "Số lượng": 100.0,
+                        "Đơn giá": 50000.0,
+                        "% Thuế VAT": 10.0,
+                        "Thành tiền": 5500000.0
+                    }]
+
+            df_edit_items = st.data_editor(
+                pd.DataFrame(st.session_state.contract_items),
+                num_rows="dynamic",
+                use_container_width=True,
+                column_config={
+                    "Số lượng": st.column_config.NumberColumn(min_value=1.0, step=1.0),
+                    "Đơn giá": st.column_config.NumberColumn(min_value=0.0, step=1000.0),
+                    "% Thuế VAT": st.column_config.SelectboxColumn(
+                        help="Chọn 8%, 10% hoặc mức thuế áp dụng",
+                        options=[0.0, 8.0, 10.0],
+                        required=True
+                    ),
+                    "Thành tiền": st.column_config.NumberColumn(disabled=True)
+                },
+                key="editor_contract_items"
+            )
+
+            # Tính toán chính xác theo công thức:
+            # thanhtien = (soluong x dongia) + VAT; VAT = (soluong x dongia) x thuesuat
+            calc_items = []
+            grand_total = 0.0
+            for row in df_edit_items.to_dict('records'):
+                q = float(row.get('Số lượng', 0) or 0)
+                p = float(row.get('Đơn giá', 0) or 0)
+                v = float(row.get('% Thuế VAT', 0) or 0)
+                tien_truoc_thue = q * p
+                tien_vat = tien_truoc_thue * (v / 100)
+                thanh_tien = tien_truoc_thue + tien_vat
+                grand_total += thanh_tien
+                calc_items.append({
+                    "name": row.get('Tên hàng hóa', ''),
+                    "unit": row.get('ĐVT', ''),
+                    "qty": q,
+                    "price": p,
+                    "vat_rate": v,
+                    "total_line": thanh_tien
+                })
+
+            txt_money = read_money_vietnamese(grand_total)
+
+            m_c1, m_c2 = st.columns([1, 2])
+            m_c1.metric("TỔNG GIÁ TRỊ HỢP ĐỒNG (CÓ VAT)", f"{format_currency(grand_total)} đ")
+            m_c2.info(f"🔤 **Số tiền bằng chữ:** {txt_money}")
+
+            st.divider()
+            st.subheader("3. Điều khoản Hợp đồng & Thông tin Biên bản")
+            col_t1, col_t2, col_t3 = st.columns(3)
+            sign_date = col_t1.date_input("Ngày ký hồ sơ", datetime.now())
+            warranty_mo = col_t2.number_input("Thời gian bảo hành (Tháng)", min_value=0, value=12)
+            deliver_days = col_t3.number_input("Thời gian giao hàng (Ngày)", min_value=1, value=5)
+
+            col_pay1, col_pay2 = st.columns(2)
+            adv_percent = col_pay1.slider("Tỷ lệ tạm ứng Đợt 1 (%)", min_value=10, max_value=90, value=50, step=10)
+            dot1_val = grand_total * (adv_percent / 100)
+            dot2_val = grand_total - dot1_val
+            col_pay2.write(f"• Tạm ứng Đợt 1 ({adv_percent}%): **{format_currency(dot1_val)} đ**\n• Quyết toán Đợt 2 ({100-adv_percent}%): **{format_currency(dot2_val)} đ**")
+
+            col_r1, col_r2, col_r3 = st.columns(3)
+            rec_name = col_r1.text_input("Người nhận hàng (trên BBGN)", value=c_rep)
+            rec_role = col_r2.text_input("Chức vụ người nhận", value="Thủ kho / Đại diện")
+            rec_phone = col_r3.text_input("SĐT người nhận", value=c_phone)
+
+            st.write("---")
+            if st.button("📝 TẠO VÀ XUẤT TRỌN BỘ HỒ SƠ (.DOCX)", type="primary", use_container_width=True):
+                if not c_name:
+                    st.error("Vui lòng điền tên doanh nghiệp Bên Mua!")
+                else:
+                    payload = {
+                        "so_hd": seq_info['so_hd'],
+                        "so_bbgn": seq_info['so_bbgn'],
+                        "so_bbnt": seq_info['so_bbnt'],
+                        "so_dntt": seq_info['so_dntt'],
+                        "so_bbtl": seq_info['so_bbtl'],
+                        "ngay_ky_dt": sign_date,
+                        "ngay_ky": sign_date.strftime("%Y-%m-%d"),
+                        "khach_hang": c_name,
+                        "mst": c_mst,
+                        "nguoi_dd": c_rep,
+                        "tong_tien": grand_total,
+                        "sotienbangchu": txt_money,
+                        "dot1_amt": dot1_val,
+                        "dot2_amt": dot2_val,
+                        "customer": {
+                            "name": c_name, "mst": c_mst, "address": c_addr,
+                            "phone": c_phone, "email": c_email, "rep_name": c_rep,
+                            "rep_role": c_role, "auth_doc": c_auth, "bank_no": c_bank_no,
+                            "bank_name": c_bank_name
+                        },
+                        "items": calc_items,
+                        "extra_info": {
+                            "warranty_months": warranty_mo,
+                            "delivery_days": deliver_days,
+                            "adv_pct": adv_percent,
+                            "delivery_address": c_addr,
+                            "receiver_name": rec_name,
+                            "receiver_role": rec_role,
+                            "receiver_phone": rec_phone
+                        }
+                    }
+
+                    with st.spinner("Đang khởi tạo tài liệu Word..."):
+                        docx_bytes = create_full_contract_docx(payload)
+                        save_contract_to_sheet(payload)
+                        st.session_state['last_docx'] = docx_bytes
+                        st.session_state['last_hd_code'] = seq_info['so_hd']
+                        st.success(f"✅ Đã tạo thành công bộ hồ sơ hợp đồng số: {seq_info['so_hd']}")
+
+            if 'last_docx' in st.session_state:
+                st.download_button(
+                    label=f"📥 Tải Trọn Bộ Hợp Đồng & Chứng Từ ({st.session_state['last_hd_code']}.docx)",
+                    data=st.session_state['last_docx'],
+                    file_name=f"HoSo_HopDong_{st.session_state['last_hd_code'].replace('/', '_')}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    type="primary"
+                )
+
+        with tab_list_hd:
+            st.subheader("Tra Cứu Hồ Sơ Hợp Đồng")
+            contracts_data = fetch_all_contracts()
+            if not contracts_data:
+                st.info("Chưa có hợp đồng nào được lưu trong hệ thống.")
+            else:
+                df_c = pd.DataFrame(contracts_data)
+                df_view = df_c[['so_hd', 'ngay_ky', 'khach_hang', 'mst', 'tong_tien', 'dot1_amt', 'dot2_amt']].copy()
+                df_view['tong_tien'] = df_view['tong_tien'].apply(format_currency)
+                df_view['dot1_amt'] = df_view['dot1_amt'].apply(format_currency)
+                df_view['dot2_amt'] = df_view['dot2_amt'].apply(format_currency)
+                df_view.columns = ["Số HĐ", "Ngày ký", "Bên Mua", "Mã số thuế", "Tổng tiền", "Tạm ứng (Đ1)", "Quyết toán (Đ2)"]
+                
+                sel_c_event = st.dataframe(df_view, use_container_width=True, hide_index=True, selection_mode="single-row", on_select="rerun", key="tbl_contracts_view")
+                
+                if sel_c_event.selection.rows:
+                    idx_c = sel_c_event.selection.rows[0]
+                    if idx_c < len(contracts_data):
+                        c_selected = contracts_data[idx_c]
+                        st.write(f"📄 Tái xuất file Word cho: **{c_selected['so_hd']}** - Khách: **{c_selected['khach_hang']}**")
+                        
+                        raw_date = c_selected.get('ngay_ky', '')
+                        try: p_date = datetime.strptime(raw_date, "%Y-%m-%d")
+                        except: p_date = datetime.now()
+                            
+                        c_rebuild = {
+                            "so_hd": c_selected['so_hd'],
+                            "so_bbgn": c_selected['so_hd'].replace("HĐMB", "BBGN"),
+                            "so_bbnt": c_selected['so_hd'].replace("HĐMB", "BBNT"),
+                            "so_dntt": c_selected['so_hd'].replace("HĐMB", "ĐNTT"),
+                            "so_bbtl": c_selected['so_hd'].replace("HĐMB", "BBTL"),
+                            "ngay_ky_dt": p_date,
+                            "tong_tien": float(c_selected.get('tong_tien', 0)),
+                            "sotienbangchu": read_money_vietnamese(c_selected.get('tong_tien', 0)),
+                            "dot1_amt": float(c_selected.get('dot1_amt', 0)),
+                            "dot2_amt": float(c_selected.get('dot2_amt', 0)),
+                            "customer": {
+                                "name": c_selected.get('khach_hang'),
+                                "mst": c_selected.get('mst'),
+                                "address": c_selected.get('extra_info', {}).get('delivery_address', ''),
+                                "phone": c_selected.get('extra_info', {}).get('receiver_phone', ''),
+                                "rep_name": c_selected.get('nguoi_dd')
+                            },
+                            "items": c_selected.get('items', []),
+                            "extra_info": c_selected.get('extra_info', {})
+                        }
+                        
+                        re_docx = create_full_contract_docx(c_rebuild)
+                        st.download_button(
+                            label="🖨️ Tải Lại File Word",
+                            data=re_docx,
+                            file_name=f"HoSo_{c_selected['so_hd'].replace('/', '_')}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        )
+
+    # --- TAB 4: KHÁCH THÊM ---
+    elif menu == "4. Khách Thêm":
+        st.header("👥 Quản Lý Khách Thêm (Chiết khấu & Hoàn tiền)")
         t_add, t_pipe, t_report, t_manage = st.tabs(["➕ Nhập Khách Mới", "🏭 Duyệt Trạng Thái", "📊 Báo Cáo Hoàn Tiền", "⚙️ Sửa & Xóa"])
         
         extra_data = fetch_extra_customers()
@@ -926,14 +1537,13 @@ def main_app():
                     st.dataframe(disp_paid, use_container_width=True, hide_index=True)
                     
         with t_report:
-            st.subheader("Báo Cáo Tổng Hơp Hồ Sơ Chưa Chi")
+            st.subheader("Báo Cáo Tổng Hợp Hồ Sơ Chưa Chi")
             df_report_unpaid = df_extra[df_extra['status'] == 'Chưa chi'].copy()
             if df_report_unpaid.empty:
                 st.success("🎉 Tuyệt vời! Không còn khách nào trong trạng thái Chưa Chi.")
             else:
                 total_refund_pending = df_report_unpaid['refund'].sum()
                 st.metric("TỔNG SỐ TIỀN CÒN CHUYỂN LẠI (CẦN CHI)", format_currency(total_refund_pending))
-                
                 disp_rep = df_report_unpaid[['customer', 'refund']].copy()
                 disp_rep['refund'] = disp_rep['refund'].apply(format_currency)
                 disp_rep.columns = ["Tên Khách Hàng", "Số Tiền Còn Chuyển Lại"]
@@ -952,7 +1562,6 @@ def main_app():
                             r['pre_tax'] = float(r.get('pre_tax', 0))
                             r['actual'] = float(r.get('actual', 0))
                             r['vat_rate'] = float(r.get('vat_rate', 0))
-                            
                             r['not_done'] = r['pre_tax'] - r['actual']
                             r['pit_tax'] = (r['vat_rate'] / 100) * r['not_done']
                             r['refund'] = r['not_done'] - r['pit_tax']
@@ -964,8 +1573,8 @@ def main_app():
             else:
                 st.info("Chưa có cơ sở dữ liệu Khách Thêm.")
 
-    # --- TAB 4: SỔ QUỸ (CHỈ TM) ---
-    elif menu == "4. Sổ Quỹ":
+    # --- TAB 5: SỔ QUỸ (CHỈ TM) ---
+    elif menu == "5. Sổ Quỹ":
         st.header("📊 Sổ Quỹ Tiền Mặt")
         df = pd.DataFrame(fetch_cashbook())
         if df.empty: df = pd.DataFrame(columns=["Date", "Content", "Amount", "TM/CK", "Note"])
@@ -1013,8 +1622,8 @@ def main_app():
                     else: st.warning("Nhập số tiền > 0")
         else: st.warning("🔒 Chỉ Admin được ghi sổ.")
 
-    # --- TAB 5: DASHBOARD & BÁO CÁO ---
-    elif menu == "5. Dashboard & Báo Cáo":
+    # --- TAB 6: DASHBOARD & BÁO CÁO ---
+    elif menu == "6. Dashboard & Báo Cáo":
         st.header("📊 Dashboard & Báo Cáo Quản Trị")
         orders = fetch_all_orders()
         cashbook = fetch_cashbook()
@@ -1113,7 +1722,6 @@ def main_app():
 
             with t5:
                 st.subheader("Theo Dõi Hoa Hồng Nhân Viên")
-                
                 comm_summary = df_orders.groupby(['staff', 'comm_status'])['total_comm'].sum().unstack(fill_value=0).reset_index()
                 if 'Chưa chi' not in comm_summary.columns: comm_summary['Chưa chi'] = 0.0
                 if 'Đã chi' not in comm_summary.columns: comm_summary['Đã chi'] = 0.0
@@ -1138,8 +1746,6 @@ def main_app():
                 m3.metric("Chưa Thanh Toán", format_currency(total_pending))
                 
                 st.divider()
-                
-                # BẢNG KÊ CHI TIẾT: Đơn đã HOÀN THÀNH mà CHƯA CHI HOA HỒNG
                 st.subheader("📋 Đơn Hàng Hoàn Thành Chưa Chi Hoa Hồng")
                 
                 df_pending_details = df_orders[
@@ -1161,10 +1767,7 @@ def main_app():
                     disp_staff_total["Tổng chưa chi (Đơn hoàn thành)"] = disp_staff_total["Tổng chưa chi (Đơn hoàn thành)"].apply(format_currency)
                     st.dataframe(disp_staff_total, hide_index=True, use_container_width=True)
                     
-                    # --- UPDATE: CHO PHÉP TÍCH CHỌN NHIỀU ĐƠN HÀNG VÀ CHI HÀNG LOẠT ---
                     st.write("**Bảng kê chi tiết các đơn hàng (Tích chọn để chi hoa hồng):**")
-                    
-                    # Sử dụng st.dataframe ở chế độ selection_mode="multi-row" để tích chọn checkbox nhiều dòng
                     event_multi = st.dataframe(
                         df_base, 
                         use_container_width=True, 
@@ -1174,11 +1777,8 @@ def main_app():
                         key="multi_select_commission"
                     )
                     
-                    # Kiểm tra xem có dòng nào được chọn không
                     selected_rows = event_multi.selection.rows
-                    
                     if selected_rows:
-                        # Trích xuất danh sách các mã đơn hàng được chọn từ vị trí dòng
                         selected_order_ids = [df_base.iloc[r]["Mã đơn hàng"] for r in selected_rows]
                         selected_total_comm = sum([float(df_base.iloc[r]["Số tiền hoa hồng"]) for r in selected_rows])
                         
@@ -1194,11 +1794,10 @@ def main_app():
                                     else:
                                         st.error("Gặp lỗi trong quá trình cập nhật trạng thái lên hệ thống.")
                         else:
-                            st.warning("🔒 Chỉ tài khoản Admin mới quyền thực hiện nút bấm chi hoa hồng.")
+                            st.warning("🔒 Chỉ tài khoản Admin mới có quyền thực hiện thao tác này.")
                     else:
                         st.info("💡 Mẹo: Bạn có thể tích chọn ô đầu dòng của bảng trên để xử lý chi hoa hồng đồng thời cho nhiều đơn hàng.")
                     
-                    # --- XUẤT FILE EXCEL ---
                     try:
                         buffer = io.BytesIO()
                         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
@@ -1210,7 +1809,7 @@ def main_app():
                             label="📥 Xuất bảng kê ra file Excel",
                             data=buffer,
                             file_name=f"HoaHong_ChuaChi_HoanThanh_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                         )
                     except Exception as ex:
                         st.error(f"Không thể tạo file Excel: {ex}")
